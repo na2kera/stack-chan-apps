@@ -1,0 +1,1 @@
+"""StackChan photobooth edge service."""
