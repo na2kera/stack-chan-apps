@@ -50,6 +50,29 @@ class ReviewBody(BaseModel):
     decision: Literal["save", "retake"]
 
 
+async def _read_frame_body(request: Request) -> bytes:
+    """フレーム本文を上限付きで読む。
+
+    Content-Length 必須 (無ければ 411)。宣言が上限を超えていれば読む前に 413。
+    宣言を偽って多く送られても、読みながら上限を超えた時点で 413 にする。
+    """
+    length = request.headers.get("content-length")
+    if length is None:
+        raise ServiceError(411, "length_required")
+    if not length.isdigit():
+        raise ServiceError(400, "invalid_header:content-length")
+    if int(length) > MAX_FRAME_BYTES:
+        raise ServiceError(413, "frame_too_large")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > MAX_FRAME_BYTES:
+            raise ServiceError(413, "frame_too_large")
+    if not buf:
+        raise ServiceError(400, "empty_frame")
+    return bytes(buf)
+
+
 def _int_header(request: Request, name: str) -> int:
     value = request.headers.get(name)
     if value is None:
@@ -124,14 +147,7 @@ def create_app(
 
     @v1.post("/sessions/{session_id}/frames")
     async def frame(session_id: str, request: Request) -> dict[str, Any]:
-        length = request.headers.get("content-length")
-        if length is not None and length.isdigit() and int(length) > MAX_FRAME_BYTES:
-            raise ServiceError(413, "frame_too_large")
-        data = await request.body()
-        if len(data) > MAX_FRAME_BYTES:
-            raise ServiceError(413, "frame_too_large")
-        if not data:
-            raise ServiceError(400, "empty_frame")
+        data = await _read_frame_body(request)
         f = FrameInput(
             session_id=session_id,
             frame_id=_int_header(request, "x-frame-id"),

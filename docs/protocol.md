@@ -73,7 +73,8 @@
 | 409 | `nothing_to_save` | 採用フレームも候補も無い、または REVIEW 以外の状態での save |
 | 409 | `cancelled` | cancel 済みセッションへの timeout |
 | 409 | `nothing_to_retake` | REVIEW / TIMEOUT 以外 (撮影中・アップロード中・公開後・cancel 後) での retake |
-| 413 | `frame_too_large` | frame の本文が 2 MiB を超える |
+| 411 | `length_required` | frame に `Content-Length` が無い (chunked 転送は受け付けない) |
+| 413 | `frame_too_large` | frame の `Content-Length` が 2 MiB を超える (読む前に判定)、または読んだ本文が 2 MiB を超えた |
 
 ## タイムアウトと再試行
 

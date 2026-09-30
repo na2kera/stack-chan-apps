@@ -445,3 +445,32 @@ def test_get_touches_under_store_lock(service, mono) -> None:
     store._clock = clock
     store.get(sid)
     assert held == [True]
+
+
+def test_frame_requires_content_length(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    sid = start(client)
+    body = jpeg_body()
+
+    def chunks():
+        yield body[:100]
+        yield body[100:]
+
+    h = frame_headers(1, "capture")
+    r = client.post(f"/v1/sessions/{sid}/frames", content=chunks(), headers=h)
+    assert r.status_code == 411 and r.json() == {"error": "length_required"}
+    assert analyzer.calls == 0
+
+
+def test_frame_too_large_declared_or_streamed(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    from edge.api import MAX_FRAME_BYTES
+
+    sid = start(client)
+    h = {**frame_headers(1, "capture"), "Content-Length": str(MAX_FRAME_BYTES + 1)}
+    r = client.post(f"/v1/sessions/{sid}/frames", content=b"x", headers=h)
+    assert r.status_code == 413 and r.json() == {"error": "frame_too_large"}
+    # Content-Length を小さく偽っても、読みながら上限で打ち切る
+    h = {**frame_headers(2, "capture"), "Content-Length": "10"}
+    big = b"\0" * (MAX_FRAME_BYTES + 4096)
+    r = client.post(f"/v1/sessions/{sid}/frames", content=big, headers=h)
+    assert r.status_code == 413
+    assert analyzer.calls == 0
