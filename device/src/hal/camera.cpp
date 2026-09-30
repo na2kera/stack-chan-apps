@@ -64,6 +64,9 @@ bool Camera::begin() {
   last_error_ = err;
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_camera_init failed: 0x%x (%s)", err, esp_err_to_name(err));
+    // 途中まで確保したドライバ資源を片付け、「再試行」で最初から初期化できるようにする。
+    // 何も確保されていなければ ESP_ERR_INVALID_STATE が返るだけなので戻り値は見ない。
+    (void)esp_camera_deinit();
     ready_ = false;
     return false;
   }
