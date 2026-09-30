@@ -545,3 +545,17 @@ def test_declared_size_must_match(
     r = client.post(f"/v1/sessions/{sid}/frames", content=body, headers=h)
     assert r.status_code == 400 and r.json() == {"error": "bad_image"}
     assert analyzer.calls == 0
+
+
+@pytest.mark.parametrize(
+    "sid",
+    [
+        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",  # UUID v1
+        "00000000-0000-0000-0000-000000000000",  # nil
+        "{12345678-1234-4678-9234-567812345678}",  # v4 だが正規形でない
+        "not-a-uuid",
+    ],
+)
+def test_session_id_must_be_uuid4(client: TestClient, sid: str) -> None:
+    r = client.post("/v1/sessions", json={"session_id": sid}, headers=AUTH)
+    assert r.status_code == 400 and r.json() == {"error": "invalid_session_id"}

@@ -209,6 +209,15 @@ class SessionStore:
             return len(self._sessions)
 
 
+def _is_uuid4(value: str) -> bool:
+    """8-4-4-4-12 形式 (大文字小文字は問わない) の UUID バージョン 4 だけを受け付ける。"""
+    try:
+        u = uuid.UUID(value)
+    except ValueError:
+        return False
+    return u.version == 4 and str(u) == value.lower()
+
+
 def _iso_jst(dt: datetime) -> str:
     return dt.astimezone(JST).isoformat(timespec="seconds")
 
@@ -256,10 +265,8 @@ class PhotoboothService:
         }
 
     def start_session(self, session_id: str, started_at_ms: int) -> dict[str, Any]:
-        try:
-            uuid.UUID(session_id)
-        except ValueError as exc:
-            raise ServiceError(400, "invalid_session_id") from exc
+        if not _is_uuid4(session_id):
+            raise ServiceError(400, "invalid_session_id")
         _, evicted = self.store.start(session_id)
         for sid in evicted:
             log_event("session_evicted", session_id=sid, reason="max_sessions")

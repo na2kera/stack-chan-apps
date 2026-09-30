@@ -65,7 +65,7 @@
 | --- | --- | --- |
 | 400 | `bad_request` | JSON 本文が不正（必須項目の欠け、`decision` が `save` / `retake` 以外など） |
 | 400 | `unsupported_protocol_version` | hello の `protocol_version` が 1 以外 |
-| 400 | `invalid_session_id` | session_start の `session_id` が UUID でない |
+| 400 | `invalid_session_id` | session_start の `session_id` が UUID バージョン 4 (8-4-4-4-12 形式) でない |
 | 400 | `missing_header:<name>` / `invalid_header:<name>` | frame のヘッダが無い・数値でない・`X-Format` / `X-Phase` が既定値以外 |
 | 400 | `empty_frame` / `bad_image` | frame の本文が空、宣言した形式・サイズでデコードできない、`X-Width` / `X-Height` が 0 以下、または JPEG の実サイズが宣言と違う |
 | 400 | `image_too_large` | 宣言サイズ (`X-Width` / `X-Height`) または JPEG の実サイズが edge 設定の `max_width` / `max_height` (初期 1280×960) を超える |
