@@ -4,9 +4,9 @@ Session は 1 回の撮影の状態を持ち、SessionStore は dict + lock で�
 PhotoboothService は api.py から呼ばれる入口で、解析・判定・首振り・gallery を組み合わせる。
 
 スレッド: FastAPI は同期処理をスレッドプールで並行に呼ぶ。
-- SessionStore._lock: dict の出し入れだけを守る。
+- SessionStore._lock: dict の出し入れと touched の更新を守る。
 - Session.lock: 1 セッションのフレームを到着順に 1 枚ずつ処理し、状態の読み書きを守る。
-  (ロック順は常に store → session。store を持ったまま session.lock を取らない)
+  (両方取るときは session → store の順。store を持ったまま session.lock を取らない)
 - MediaPipeAnalyzer は内部ロックで直列化される。
 """
 
@@ -134,37 +134,49 @@ class SessionStore:
         self._clock = clock
 
     def start(self, session_id: str) -> Session:
-        now = self._clock()
         with self._lock:
+            now = self._clock()
             session = self._sessions.get(session_id)
             if session is None:
                 session = Session(session_id, now)
                 self._sessions[session_id] = session
                 return session
+            session.touched = now
         with session.lock:
             session.reset()
-            session.touched = now
         return session
 
     def get(self, session_id: str) -> Session:
+        # touched の更新も store のロックの中で行い、sweep() との間に隙間を作らない
         with self._lock:
             session = self._sessions.get(session_id)
-        if session is None:
-            raise ServiceError(404, "unknown_session")
-        session.touched = self._clock()
+            if session is None:
+                raise ServiceError(404, "unknown_session")
+            session.touched = self._clock()
         return session
 
     def sweep(self) -> list[str]:
-        now = self._clock()
+        """idle_sec 以上イベントの無いセッションを消す。
+
+        候補を選んだあと、セッションのロック → store のロックの順に取り直して
+        touched を再確認する (その間に get() / start() があれば消さない)。
+        """
         with self._lock:
-            expired = [s for s in self._sessions.values() if now - s.touched >= self._idle_sec]
-            for s in expired:
-                del self._sessions[s.session_id]
-        for s in expired:
+            now = self._clock()
+            candidates = [s for s in self._sessions.values() if now - s.touched >= self._idle_sec]
+        removed: list[str] = []
+        for s in candidates:
             with s.lock:
+                with self._lock:
+                    if self._sessions.get(s.session_id) is not s:
+                        continue
+                    if self._clock() - s.touched < self._idle_sec:
+                        continue
+                    del self._sessions[s.session_id]
                 s.discard_frames()
                 s.generation += 1
-        return [s.session_id for s in expired]
+                removed.append(s.session_id)
+        return removed
 
     def states(self) -> list[State]:
         with self._lock:

@@ -401,3 +401,47 @@ def test_retake_rejected_while_uploading(cfg, gallery, clock) -> None:
     slow.release.set()
     executor.shutdown(wait=True)
     assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).json()["status"] == "ready"
+
+
+class _HookLock:
+    """acquire の直前に 1 度だけ hook を呼ぶロック (掃除と get の競合を再現する)。"""
+
+    def __init__(self, hook) -> None:
+        self._lock = threading.Lock()
+        self._hook = hook
+
+    def __enter__(self):
+        hook, self._hook = self._hook, None
+        if hook:
+            hook()
+        return self._lock.__enter__()
+
+    def __exit__(self, *exc):
+        return self._lock.__exit__(*exc)
+
+
+def test_sweep_rechecks_touched_under_session_lock(client: TestClient, service, mono) -> None:
+    sid = start(client)
+    store = service.store
+    mono.t += 301  # 期限切れの候補になる
+    session = store._sessions[sid]
+    # 掃除が候補を選んだあと、セッションを消す前に get() が来る
+    session.lock = _HookLock(lambda: store.get(sid))
+    assert store.sweep() == []
+    assert store.get(sid) is session
+
+
+def test_get_touches_under_store_lock(service, mono) -> None:
+    """touched の更新は store のロックの中で行う (掃除との間に隙間を作らない)。"""
+    store = service.store
+    sid = new_session_id()
+    store.start(sid)
+    held: list[bool] = []
+
+    def clock() -> float:
+        held.append(store._lock.locked())
+        return mono.t
+
+    store._clock = clock
+    store.get(sid)
+    assert held == [True]
