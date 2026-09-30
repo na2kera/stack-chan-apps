@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       device: ${{ steps.filter.outputs.device }}
+      edge: ${{ steps.filter.outputs.edge }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -18,6 +19,9 @@ jobs:
           filters: |
             device:
               - 'device/**'
+              - '.github/workflows/ci.yml'
+            edge:
+              - 'edge/**'
               - '.github/workflows/ci.yml'
 
   device-build:
@@ -43,3 +47,24 @@ jobs:
         run: |
           cp include/config.example.h include/config.h
           pio run
+
+  edge-test:
+    needs: changes
+    if: needs.changes.outputs.edge == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.9'
+          enable-cache: true
+          cache-dependency-glob: edge/uv.lock
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test (no model, no hardware)
+        run: uv run pytest
