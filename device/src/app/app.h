@@ -44,7 +44,9 @@ class App {
   void updateError(const hal::Event& ev, uint32_t now_ms);
 
   // プレビュー 1 フレーム分。CAPTURE なら条件を満たすフレームを候補として保持する。
-  void previewFrame(bool capture, uint32_t now_ms);
+  // フレームが kFrameStallMs 続けて取れなければ ERROR に遷移して false を返す。
+  bool previewFrame(bool capture, uint32_t now_ms);
+  void resetFrameWatch(uint32_t now_ms);
   void logPreviewStats(uint32_t now_ms);
   void drawIdle(uint32_t now_ms);
   const char* idleWarning() const;
@@ -73,6 +75,9 @@ class App {
   // プレビューの実測
   uint32_t preview_frames_ = 0;
   uint32_t preview_since_ms_ = 0;
+  // フレーム取得の監視 (COMPOSE / CAPTURE に入るたびにリセット)
+  uint32_t last_frame_ms_ = 0;
+  uint32_t grab_failures_ = 0;
 
   // 候補フレーム (REVIEW で表示、撮り直し・終了で解放)
   hal::FrameCopy candidate_;

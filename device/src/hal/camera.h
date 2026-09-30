@@ -18,6 +18,9 @@ class Camera {
   // 失敗しても再度呼べる (ERROR の「再試行」)。
   bool begin();
 
+  // ドライバを破棄してから begin() し直す。フレームが来なくなったときの「再試行」用。
+  bool restart();
+
   // 初期化済みでフレームを取れる状態か。
   bool ready() const { return ready_; }
 

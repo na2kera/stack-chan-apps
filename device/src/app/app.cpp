@@ -23,6 +23,10 @@ constexpr int kSweep[] = {-1, +1, +1, -1};
 constexpr uint8_t kSweepLen = sizeof(kSweep) / sizeof(kSweep[0]);
 
 constexpr const char* kCameraInitFailed = "カメラ初期化失敗";
+constexpr const char* kCameraNoFrame = "カメラからフレームを取得できません";
+
+// COMPOSE / CAPTURE でこの時間フレームが 1 枚も取れなければカメラ停止とみなす。
+constexpr uint32_t kFrameStallMs = 2000;
 
 }  // namespace
 
@@ -73,6 +77,7 @@ void App::enter(State next, uint32_t now_ms) {
       sweep_step_ = 0;
       preview_frames_ = 0;
       preview_since_ms_ = now_ms;
+      resetFrameWatch(now_ms);
       head_.neutral(now_ms);
       if (!camera_.ready()) {
         ui::drawPreviewPlaceholder();
@@ -85,6 +90,7 @@ void App::enter(State next, uint32_t now_ms) {
       shown_remaining_sec_ = -1;
       preview_frames_ = 0;
       preview_since_ms_ = now_ms;
+      resetFrameWatch(now_ms);
       candidate_.clear();
       if (!camera_.ready()) {
         ui::drawPreviewPlaceholder();
@@ -216,7 +222,9 @@ void App::updateAnnounce(uint32_t now_ms) {
 // ---- COMPOSE -------------------------------------------------------------
 
 void App::updateCompose(uint32_t now_ms) {
-  previewFrame(false, now_ms);
+  if (!previewFrame(false, now_ms)) {
+    return;
+  }
 
   // 顔判定が無いので、動作確認用に小さく左右を見るだけ (design §4)。
   if (sweep_step_ < kSweepLen && !head_.faulted()) {
@@ -250,7 +258,9 @@ void App::updateCapture(uint32_t now_ms) {
     return;
   }
 
-  previewFrame(true, now_ms);
+  if (!previewFrame(true, now_ms)) {
+    return;
+  }
 
   // 残り秒数 (切り上げ)。変わったときだけ描き直す。
   const int remaining = static_cast<int>((total_ms - elapsed + 999) / 1000);
@@ -270,14 +280,34 @@ void App::updateCapture(uint32_t now_ms) {
   }
 }
 
-void App::previewFrame(bool capture, uint32_t now_ms) {
+void App::resetFrameWatch(uint32_t now_ms) {
+  last_frame_ms_ = now_ms;
+  grab_failures_ = 0;
+}
+
+bool App::previewFrame(bool capture, uint32_t now_ms) {
   if (!camera_.ready()) {
-    return;  // プレビュー枠は状態に入ったときに描いてある
+    return true;  // プレビュー枠は状態に入ったときに描いてある
   }
   camera_fb_t* fb = camera_.grab();
   if (fb == nullptr) {
-    return;
+    ++grab_failures_;
+    const uint32_t stalled = now_ms - last_frame_ms_;
+    if (stalled >= kFrameStallMs) {
+      ESP_LOGE(TAG, "no camera frame for %lu ms in %s (%lu grab failures)",
+               static_cast<unsigned long>(stalled), stateName(state_),
+               static_cast<unsigned long>(grab_failures_));
+      if (session_.active && edge_.isOnline()) {
+        edge_.sessionCancel(session_);
+      }
+      session_.end();
+      error_reason_ = kCameraNoFrame;
+      enter(State::Error, now_ms);
+      return false;
+    }
+    return true;
   }
+  last_frame_ms_ = now_ms;
   const uint32_t frame_id = session_.nextFrameId();
   const int16_t w = static_cast<int16_t>(fb->width);
   const int16_t h = static_cast<int16_t>(fb->height);
@@ -297,7 +327,7 @@ void App::previewFrame(bool capture, uint32_t now_ms) {
   }
   camera_.release(fb);
   ++preview_frames_;
-  (void)now_ms;
+  return true;
 }
 
 void App::logPreviewStats(uint32_t now_ms) {
@@ -403,7 +433,8 @@ void App::updateError(const hal::Event& ev, uint32_t now_ms) {
   const int hit = buttonHit(ev, ui::kErrorButtons);
   if (hit == 0) {  // 再試行
     ESP_LOGI(TAG, "error: retry (%s)", error_reason_);
-    if (camera_.begin()) {
+    // 初期化失敗・フレーム停止のどちらでも、ドライバを破棄してから初期化し直す。
+    if (camera_.restart()) {
       enter(State::Idle, now_ms);
     } else {
       ESP_LOGE(TAG, "retry failed: camera err=0x%x", camera_.lastError());

@@ -76,6 +76,16 @@ bool Camera::begin() {
 #endif
 }
 
+bool Camera::restart() {
+#ifndef PHOTOBOOTH_NO_CAMERA
+  ESP_LOGW(TAG, "restart camera (was %s)", ready_ ? "ready" : "not ready");
+  // 未初期化なら ESP_ERR_INVALID_STATE が返るだけなので戻り値は見ない。
+  (void)esp_camera_deinit();
+  ready_ = false;
+#endif
+  return begin();
+}
+
 camera_fb_t* Camera::grab() {
   if (!ready_) {
     return nullptr;
