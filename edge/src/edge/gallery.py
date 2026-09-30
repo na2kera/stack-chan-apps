@@ -72,6 +72,7 @@ class MockGallery:
         """同じ session_id・同じ画像の再送は同じ写真を返す (冪等、spec §7.1)。
 
         retake 後に同じ session_id で別の画像が来たら別の写真として扱う。
+        前の写真が期限切れなら、同じ画像でも新しいトークンで登録し直す。
         """
         if not jpeg.startswith(b"\xff\xd8"):
             raise ValueError("not a JPEG")
@@ -80,6 +81,8 @@ class MockGallery:
             self._sweep_locked()
             token = self._by_session.get((session_id, digest))
             photo = self._photos.get(token) if token else None
+            if photo is not None and (photo.jpeg is None or self._now() >= photo.expires_at):
+                photo = None  # 期限切れの URL は返さず、新しい写真として登録し直す
             if photo is None:
                 token = secrets.token_urlsafe(16)  # 128 ビット
                 photo = MockPhoto(

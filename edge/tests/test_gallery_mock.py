@@ -71,3 +71,15 @@ def test_share_redirect_has_text_only(client: TestClient, gallery: MockGallery) 
     assert text == "スタックチャンに撮ってもらいました！ #スタックチャン #StackChan"
     assert _token(res.photo_url) not in loc
     assert "edge.test" not in loc and "/mock/p/" not in loc
+
+
+def test_reupload_after_expiry_creates_new_photo(
+    client: TestClient, gallery: MockGallery, clock: FakeClock
+) -> None:
+    first = gallery.upload(JPEG, "s1", CAPTURED)
+    clock.advance(minutes=61)
+    assert client.get(urlparse(first.photo_url).path).status_code == 410
+    again = gallery.upload(JPEG, "s1", CAPTURED)  # 同じ session・同じ画像の再送
+    assert again.photo_url != first.photo_url
+    assert again.expires_at > first.expires_at
+    assert client.get(urlparse(again.photo_url).path).status_code == 200
