@@ -37,6 +37,7 @@ def test_401_on_every_endpoint(client: TestClient, headers: dict) -> None:
         ("post", f"/v1/sessions/{sid}/timeout", {}),
         ("post", f"/v1/sessions/{sid}/review", {"json": {"decision": "save"}}),
         ("get", f"/v1/sessions/{sid}/photo", {}),
+        ("get", f"/v1/sessions/{sid}/candidate", {}),
         ("post", f"/v1/sessions/{sid}/cancel", {}),
     ]
     for method, path, kw in calls:

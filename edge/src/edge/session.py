@@ -49,6 +49,7 @@ from edge.logging_setup import log_event
 PROTOCOL_VERSION = 1
 SESSION_IDLE_SEC = 300.0  # 5 分イベントの無いセッションを破棄 (protocol.md)
 JPEG_QUALITY = 90
+CANDIDATE_JPEG_QUALITY = 80  # device の REVIEW 表示用 (GET …/candidate)
 
 
 class State(StrEnum):
@@ -538,6 +539,32 @@ class PhotoboothService:
             expires_at=_iso_jst(result.expires_at),
             latency_ms=int((time.perf_counter() - t0) * 1000),
         )
+
+    # ---- candidate ----
+
+    def candidate_jpeg(self, session_id: str) -> bytes:
+        """REVIEW で device に見せる JPEG (採用フレーム、無ければ最良候補)。
+
+        サイズは受信フレームのまま、品質 CANDIDATE_JPEG_QUALITY。
+        どちらも無い (cancel 後・公開後・顔なし) なら 404 no_candidate。
+        """
+        session = self.store.get(session_id)
+        with session.lock:
+            chosen = session.chosen()
+            if chosen is None or session.state == State.CANCELLED:
+                raise ServiceError(404, "no_candidate")
+            frame_id, rgb, state = chosen.frame_id, chosen.rgb, session.state
+            kind = "accepted" if chosen is session.accepted else "best"
+        # rgb は保持後に書き換えないので、エンコードはロックの外で行う
+        jpeg = encode_jpeg(rgb, CANDIDATE_JPEG_QUALITY)
+        log_event(
+            "candidate",
+            session_id=session_id,
+            frame_id=frame_id,
+            state=state.value,
+            reason=kind,
+        )
+        return jpeg
 
     # ---- photo / cancel ----
 
