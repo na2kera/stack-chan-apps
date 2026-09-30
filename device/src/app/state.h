@@ -1,4 +1,4 @@
-// 撮影フローの状態 (docs/spec.md §4 の表と 1:1)。
+// 撮影フローの状態 (docs/spec.md §4 の表と 1:1。DIAG は spec §9 の診断画面)。
 #pragma once
 
 #include <cstdint>
@@ -15,6 +15,7 @@ enum class State : uint8_t {
   PhotoQr,
   XQr,
   Error,
+  Diag,  // edge に繋がらないときの診断画面 (docs/design/step2b-device-edge.md §4.3)
 };
 
 // ログ用の名前 (spec §4 の表記)。
@@ -29,6 +30,7 @@ inline const char* stateName(State s) {
     case State::PhotoQr:   return "PHOTO_QR";
     case State::XQr:       return "X_QR";
     case State::Error:     return "ERROR";
+    case State::Diag:      return "DIAG";
   }
   return "?";
 }
@@ -45,6 +47,7 @@ inline const char* stateTitle(State s) {
     case State::PhotoQr:   return "写真を保存";
     case State::XQr:       return "Xに投稿";
     case State::Error:     return "エラー";
+    case State::Diag:      return "診断";
   }
   return "";
 }

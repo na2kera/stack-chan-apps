@@ -10,13 +10,18 @@
 
 namespace config {
 
-// ---- ネットワーク (ステップ3以降で使用。ステップ1では未使用) ----
-constexpr const char* WIFI_SSID     = "your-ssid";
+// ---- ネットワーク (ステップ2b から使用。-DPHOTOBOOTH_NO_EDGE のビルドでは未使用) ----
+constexpr const char* WIFI_SSID     = "your-ssid";      // 2.4 GHz の SSID (ESP32-S3 は 5 GHz 非対応)
 constexpr const char* WIFI_PASSWORD = "your-password";
-constexpr const char* EDGE_HOST     = "192.168.1.10";   // edge (PC) の LAN アドレス
+constexpr const char* EDGE_HOST     = "192.168.1.10";   // edge (PC) の LAN アドレス。`ipconfig getifaddr en0`
 constexpr uint16_t    EDGE_PORT     = 8765;
-constexpr const char* DEVICE_ID     = "stackchan-01";
+constexpr const char* DEVICE_ID     = "stackchan-01";   // edge の [auth] device_id と揃える
 constexpr const char* EDGE_SHARED_KEY = "change-me";     // device と edge の共有鍵。Git に入れない
+constexpr uint32_t EDGE_TIMEOUT_MS   = 3000;   // 1 リクエストのタイムアウト (protocol.md)
+constexpr uint32_t HELLO_INTERVAL_MS = 5000;   // 通信が無いときの hello の間隔 (接続確認)
+constexpr uint32_t WIFI_BOOT_WAIT_MS = 10000;  // 起動時に Wi-Fi 接続を待つ上限。繋がらなくても IDLE へ
+constexpr uint32_t UPLOAD_WAIT_MS    = 15000;  // UPLOADING で写真の準備を待つ上限
+constexpr uint8_t  UPLOAD_RETRY      = 3;      // 保存 (review save) の再試行の上限 (protocol.md)
 
 // ---- 撮影フロー ----
 constexpr uint32_t COUNTDOWN_SEC       = 10;   // CAPTURE の長さ (spec §2 カウント)
@@ -38,9 +43,9 @@ constexpr int HEAD_SPEED      =  200;  // BSP speed 0..1000、低め
 // 指示後この時間を過ぎても isMoving() が true のままならサーボ応答なしとみなし、
 // 首を止めて固定カメラとして続行する (spec §9 サーボエラー)
 constexpr uint32_t HEAD_MOVE_TIMEOUT_MS = 3000;
-// 画像上のずれ → サーボ角の係数。符号は実機で確認して直す。
-constexpr float HEAD_GAIN_X   = -0.05f; // image_dx(px) * gain = servo_dx(1/10度)
-constexpr float HEAD_GAIN_Y   =  0.05f;
+// 画像上のずれ → サーボ角の係数は edge の config.toml [head] gain_x / gain_y にだけ置く。
+// device は edge が返す servo_dx / servo_dy をそのまま nudge() に渡す (上の可動域・1 回の上限・
+// 指示間隔でクランプする)。首が顔と逆に動くときは edge 側の符号を反転する。
 
 // ---- 画面 ----
 constexpr uint32_t IDLE_BLINK_INTERVAL_MS = 3000; // IDLE の顔が瞬きする間隔
