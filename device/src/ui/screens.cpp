@@ -171,19 +171,33 @@ void drawUploading(const char* title) {
   M5.Display.endWrite();
 }
 
+namespace {
+
+// QR 画面の右欄 1 行目に状態名を描き、その下端の y を返す。
+int16_t drawQrTitle(const char* title) {
+  auto& d = M5.Display;
+  d.setFont(font::body());
+  d.setTextColor(color::text(), color::bg());
+  d.setTextDatum(textdatum_t::top_left);
+  d.drawString(title, kQrTextX, kQrY);
+  return kQrY + d.fontHeight();
+}
+
+}  // namespace
+
 void drawPhotoQr(const char* title, const char* photo_url, const char* expires_at) {
   auto& d = M5.Display;
   d.startWrite();
   d.fillScreen(color::bg());
-  drawTitleBar(title, kQrTextX);
   const int version = drawQr(photo_url, kQrX, kQrY, kQrSize);
+  const int16_t y = drawQrTitle(title) + 16;
 
   d.setFont(font::small());
   d.setTextColor(color::text(), color::bg());
   d.setTextDatum(textdatum_t::top_left);
-  d.drawString("削除予定", kQrTextX, kTitleH + 44);
+  d.drawString("削除予定", kQrTextX, y);
   d.setFont(font::heading());
-  d.drawString(expires_at, kQrTextX, kTitleH + 66);
+  d.drawString(expires_at, kQrTextX, y + 22);
 
   static const char* const kLabels[kPhotoQrButtons] = {"次へ", "撮り直す"};
   drawButtons(kLabels, kPhotoQrButtons);
@@ -195,10 +209,10 @@ void drawXQr(const char* title, const char* share_url) {
   auto& d = M5.Display;
   d.startWrite();
   d.fillScreen(color::bg());
-  drawTitleBar(title, kQrTextX);
   const int version = drawQr(share_url, kQrX, kQrY, kQrSize);
+  const int16_t y = drawQrTitle(title) + 12;
 
-  const Rect text{kQrTextX, kTitleH + 4, kQrTextW, kScreenH - kTitleH - kButtonBarH - 8};
+  const Rect text{kQrTextX, y, kQrTextW, static_cast<int16_t>(kScreenH - kButtonBarH - 4 - y)};
   drawTextBox("保存した写真をXに添付してね", text, font::body(), color::text(), color::bg(),
               Align::Left);
 

@@ -15,15 +15,18 @@ constexpr int16_t kButtonGap = 8;     // ボタン間隔 (左右端の余白も�
 constexpr int16_t kButtonPadY = 5;    // ボタン帯の中でのボタン上下余白
 constexpr int kMaxButtons = 2;
 
-// QR: 左に 168x168、右に 144px 幅の説明欄 (design §5)。
-constexpr int16_t kQrSize = 168;
+// QR 画面 (PHOTO_QR / X_QR) はタイトル帯を持たない。
+// 左上に 184x184 の白地 QR 領域、右欄の 1 行目に状態名、その下に説明文を置く。
+// タイトル帯 (32) + QR + ボタン帯 (48) では 160px 以上の QR と余白が収まらないため
+// (design §5 との差分。レビュー round 1 で決定)。
+constexpr int16_t kQrSize = 184;
 constexpr int16_t kQrMinModulePx = 160;  // QR 本体 (モジュール部分) の最小サイズ
-constexpr int16_t kQrX = 4;
-// タイトル帯 (32) + QR (168) + ボタン帯 (48) = 248 > 240 なので、QR はタイトル帯に 8px
-// 食い込ませて置き、タイトル文字は右欄に寄せる (design との差分。README/PR 参照)。
-constexpr int16_t kQrY = kScreenH - kButtonBarH - kQrSize;  // 24
-constexpr int16_t kQrTextX = kQrX + kQrSize + 8;            // 180
-constexpr int16_t kQrTextW = kScreenW - kQrTextX - 4;       // 136
+constexpr int16_t kQrMinQuietPx = 8;     // QR 本体の外側に最低限残す白地 (片側)
+constexpr int16_t kQrX = 8;
+constexpr int16_t kQrY = 4;               // y=4..188。ボタン帯 (y=192〜) と重ならない
+constexpr int16_t kQrTextX = kQrX + kQrSize + 8;       // 200
+constexpr int16_t kQrTextW = kScreenW - kQrTextX - 4;  // 116
+static_assert(kQrY + kQrSize <= kScreenH - kButtonBarH, "QR overlaps the button bar");
 
 struct Rect {
   int16_t x;
@@ -54,8 +57,8 @@ const lgfx::IFont* large();   // lgfxJapanGothic_40
 
 enum class Align : uint8_t { Left, Center };
 
-// タイトル帯を描く。text_x を指定すると左寄せでその位置から描く (QR 画面用)。
-void drawTitleBar(const char* title, int16_t text_x = 8);
+// タイトル帯を描く。
+void drawTitleBar(const char* title);
 
 // ボタン帯。labels は count 個 (1..kMaxButtons)。
 void drawButtons(const char* const* labels, int count);
@@ -68,8 +71,9 @@ int hitButton(int x, int y, int count);
 void drawTextBox(const char* text, const Rect& rect, const lgfx::IFont* f, uint16_t fg, uint16_t bg,
                  Align align);
 
-// (x, y) に size x size の白地 QR を描く。モジュール部分が kQrMinModulePx 以上になる
-// 最小の version を選ぶ。戻り値は選んだ version (描けなければ 0)。
+// (x, y) に size x size の白地 QR を描く。QR 本体が kQrMinModulePx 以上で、かつ外側に
+// 片側 kQrMinQuietPx 以上の白地が残る最小の version を選ぶ。戻り値は選んだ version
+// (条件を満たせなければ 0)。この領域の外には描かない。
 int drawQr(const char* text, int16_t x, int16_t y, int16_t size);
 
 // RGB565 (esp_camera のバイト順) の画像を (0, 0) に描く。exclude の矩形には描かない

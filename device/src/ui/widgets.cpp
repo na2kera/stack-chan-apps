@@ -90,13 +90,13 @@ std::vector<std::string> wrapLines(const char* text, int16_t max_w) {
 
 }  // namespace
 
-void drawTitleBar(const char* title, int16_t text_x) {
+void drawTitleBar(const char* title) {
   auto& d = M5.Display;
   d.fillRect(0, 0, kScreenW, kTitleH, color::titleBg());
   d.setFont(font::body());
   d.setTextColor(color::text(), color::titleBg());
   d.setTextDatum(textdatum_t::middle_left);
-  d.drawString(title, text_x, kTitleH / 2);
+  d.drawString(title, 8, kTitleH / 2);
 }
 
 Rect buttonRect(int index, int count) {
@@ -163,8 +163,9 @@ int drawQr(const char* text, int16_t x, int16_t y, int16_t size) {
     if (thickness < kQrMinThickness) {
       break;  // これ以上 version を上げるとモジュールが細かすぎて読めない
     }
-    if (thickness * modules < kQrMinModulePx) {
-      continue;
+    const int body_px = thickness * modules;
+    if (body_px < kQrMinModulePx || body_px > size - kQrMinQuietPx * 2) {
+      continue;  // 小さすぎる、または周りの白地が足りない
     }
     QRCode qr;
     std::vector<uint8_t> buf(lgfx_qrcode_getBufferSize(version));
@@ -174,7 +175,7 @@ int drawQr(const char* text, int16_t x, int16_t y, int16_t size) {
     d.qrcode(text, x, y, size, version, false);
     return version;
   }
-  // どの version でも 160px 以上にできない (URL が長すぎる)。読めるかは実機次第で最善を描く。
+  // どの version でも条件を満たせない (URL が長すぎる)。読めるかは実機次第で最善を描く。
   d.qrcode(text, x, y, size, 1, false);
   return 0;
 }
