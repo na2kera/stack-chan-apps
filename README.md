@@ -13,7 +13,7 @@ gallery/   公開 HTTPS の写真配布サービス                             
 docs/      仕様・設計・通信契約
 ```
 
-現在の進捗: ステップ1（device 単体でフローを通す）を実装中。
+現在の進捗: ステップ2b（device を Wi-Fi で edge に繋ぎ、顔判定と首振りを実機で動かす）を実装中。
 
 ## 準備
 
@@ -35,6 +35,8 @@ pio run                                          # 初回は pioarduino とツ�
 
 カメラと内部 I2C の共有が原因と思われる不具合（カメラ初期化後にタッチ・スピーカー・サーボが効かない等）を切り分けるときは、`platformio.ini` の `build_flags` にある `-DPHOTOBOOTH_NO_CAMERA` のコメントを外してビルドする。カメラを初期化せず、プレビュー枠だけを描く。
 
+edge (PC) を使わずにステップ1と同じ固定 QR のフローで動かすときは、`build_flags` の `-DPHOTOBOOTH_NO_EDGE` のコメントを外してビルドする（Wi-Fi に繋がず、`NullEdge` を使う）。
+
 ボードパッケージとライブラリの版は `device/platformio.ini` で固定している。理由は同ファイルのコメントと [docs/design/step1-device.md](docs/design/step1-device.md) の「技術選定」を参照。
 
 ## 書き込み
@@ -54,12 +56,38 @@ pio device monitor -b 115200 --port /dev/cu.usbmodemXXXX
 
 書き込み後に自動で再起動しない場合はリセットボタンを短く押す。
 
-## 起動と操作（ステップ1）
+## edge (PC) と繋ぐ（ステップ2b）
+
+device は同じ LAN の PC で動く `edge` に HTTP でフレームを送り、顔判定・首振り量・写真の保存を任せる。通信契約は [docs/protocol.md](docs/protocol.md)。
+
+1. **Wi-Fi**: `device/include/config.h` の `WIFI_SSID` / `WIFI_PASSWORD` を設定する。K151 (ESP32-S3) は 2.4 GHz だけに対応する。
+2. **PC のアドレス**: PC (macOS) で次を実行し、出たアドレスを `config.h` の `EDGE_HOST` に書く（Wi-Fi が `en0` でない Mac では `en1` など）。
+
+   ```console
+   ipconfig getifaddr en0
+   ```
+
+3. **鍵と ID を揃える**: `config.h` の `DEVICE_ID` / `EDGE_SHARED_KEY` と、edge の `config.toml` の `[auth] device_id` / `device_key`（または環境変数 `EDGE_DEVICE_KEY`）を同じ値にする。違うと edge が 401 を返し、device の診断画面に「認証エラー」と出る。鍵は `config.h` / `config.toml` にだけ書き、コミットしない。
+4. **edge を LAN 向けに起動する**: `127.0.0.1` で listen すると K151 から届かない。PC のアドレスか `0.0.0.0` を指定する（詳細は [edge/README.md](edge/README.md)）。
+
+   ```console
+   cd edge
+   EDGE_DEVICE_KEY=<config.h と同じ鍵> uv run edge --host 0.0.0.0   # または --host <ipconfig getifaddr en0 の値>
+   ```
+
+   macOS のファイアウォールが有効なら、初回に Python の受信接続を許可する。
+5. device を書き込んで起動すると「Wi-Fi接続中」（最大 10 秒）のあと IDLE になり、右下に「PC接続中」が出る。「PC未接続」のままならタッチで診断画面を開き、SSID / IP / RSSI / edge の host:port / 最後のエラーを確認する。「再接続」で Wi-Fi から繋ぎ直し、「判定なしで撮影」で edge なしの撮影（保存はできない）を試せる。頭をタッチすると IDLE に戻る。
+
+シリアルログ (`pio device monitor`) には送信 fps と往復時間（`net: send N frames ... fps, rtt avg ...`）が 5 秒ごとに出る。鍵・URL・画像はログに出さない。
+
+## 起動と操作
 
 1. 起動すると顔と「写真を撮りたい、と言ってね」が出る。
-2. 画面か頭の上をタッチすると「写真を撮るよ！ いい顔をしてね」と話し、首を少し動かしたあと 10 秒のカウントが始まる。
-3. 10 秒後に候補写真と「保存する」「撮り直す」が出る。
-4. 「保存する」で写真 QR、「次へ」で X 投稿 QR が出る。ステップ1では QR の中身は `config.h` の固定 URL。
+2. 「PC接続中」のときに画面か頭の上をタッチすると「写真を撮るよ！ いい顔をしてね」と話し、構図あわせ（全員が枠に入って 1 秒、最長 5 秒。首が顔の方へ寄る）のあと 10 秒のカウントが始まる。
+3. 全員が目を開けて笑うと「撮れたよ」と言って写真 QR が出る。10 秒で撮れなければ edge が選んだ候補写真と「保存する」「撮り直す」が出る。
+4. 写真 QR の「次へ」で X 投稿 QR が出る。QR の中身は edge が返す URL（ステップ2b では edge のモック写真ページ。同じ Wi-Fi のスマホで開ける）。削除予定時刻も edge の値。
+
+`-DPHOTOBOOTH_NO_EDGE` でビルドしたときはステップ1と同じく、タッチで固定フロー（首を左右に少し動かす → 10 秒 → 候補 → `config.h` の固定 URL の QR）になる。
 
 ## 復旧（純正ファームに戻す）
 
@@ -74,7 +102,7 @@ M5Stack 公式の M5Burner で StackChan の純正ファームを書き戻せる
 
 ## 音声素材の差し替え
 
-`device/data/announce.wav`（セリフ）と `device/data/captured.wav`（撮影完了）は 16 kHz / mono / 16-bit の WAV。同じ形式のファイルを同名で置き換えてビルドし直せば差し替わる。仮音声は `device/tools/make_voice.sh` で macOS の TTS から生成している。
+`device/data/announce.wav`（セリフ）、`device/data/captured.wav`（撮影完了）、`device/data/closer.wav`（「もう少し寄ってね」）は 16 kHz / mono / 16-bit の WAV。同じ形式のファイルを同名で置き換えてビルドし直せば差し替わる。仮音声は `device/tools/make_voice.sh` で macOS の TTS から生成している。
 
 ## 開発の流れ
 

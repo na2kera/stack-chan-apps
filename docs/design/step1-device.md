@@ -157,6 +157,8 @@ class EdgeClient {
 
 `NullEdge` は `isOnline()=false`、他は何もしない。App はこの API だけを使う。イベント名は `docs/spec.md` §8 と一致させる。呼び出し側は `sendFrame()` の直後にフレームバッファをドライバへ返すので、実装側で非同期送信するときはコピーを取る。
 
+> ステップ2b で更新: `sendFrame` は `offerFrame` に改名し、インターフェースは `docs/design/step2b-device-edge.md` §4.1 に置き換わった。既定の実装は `net::HttpEdgeClient` で、`NullEdge` は `-DPHOTOBOOTH_NO_EDGE` でビルドしたときだけ使う（この節の固定フローを再現する）。
+
 ## 6. main.cpp の初期化順
 
 1. `M5StackChan.begin()`（内部で `M5.begin()`）。
