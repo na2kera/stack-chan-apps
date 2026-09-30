@@ -28,7 +28,9 @@ class EdgeClient {
   virtual ~EdgeClient() = default;
   virtual bool isOnline() = 0;
   virtual void sessionStart(const app::Session&) = 0;
-  virtual bool sendFrame(const app::Session&, const camera_fb_t&) = 0;  // 非同期。結果は pollResult
+  // 非同期。結果は pollResult。fb.buf は呼び出し側が戻り値の直後にドライバへ返すので、
+  // 実装は return までに fb.buf の利用を終えること (キューに積むならコピーする)。
+  virtual bool sendFrame(const app::Session&, const camera_fb_t&) = 0;
   virtual bool pollResult(FrameResult& out) = 0;
   virtual void sessionTimeout(const app::Session&) = 0;
   virtual void reviewDecision(const app::Session&, bool save) = 0;

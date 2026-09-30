@@ -322,6 +322,7 @@ bool App::previewFrame(bool capture, uint32_t now_ms) {
     ui::drawComposeFrame(px, w, h);
   }
   // edge の顔判定 (ステップ2)。NullEdge は offline なので送らない。
+  // sendFrame() は return までに fb->buf を使い終える契約 (直後に release() で返すため)。
   if (edge_.isOnline()) {
     edge_.sendFrame(session_, *fb);
   }
