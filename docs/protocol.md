@@ -51,6 +51,29 @@
 - `hint`: `"closer"`（首を振っても全員が入らない）/ `"too_many"`（上限超え）/ `null`。device は画面と音声で案内する。
 - `accepted`: true なら edge はこのフレームのバイト列を保持済み。device は UPLOADING へ進む。10 秒経過後に返った `accepted` は device 側で無視する。
 
+### review と photo
+
+- `accepted: true` のあと device は `POST …/review {decision:"save"}` を送る。edge は採用フレームを保持するだけで、自動ではアップロードしない。`GET …/photo` は save の後にポーリングする。
+- 時間切れのときは `POST …/timeout` で候補を受け取り、利用者の選択に応じて `save` か `retake` を送る。
+- `expires_at` は ISO 8601 で、日本時間のオフセット `+09:00` 付き（例 `2026-09-30T22:00:00+09:00`）。
+
+## エラー応答
+
+エラーのときの本文は `{ "error": "<code>" }`。
+
+| status | code | 条件 |
+| --- | --- | --- |
+| 400 | `bad_request` | JSON 本文が不正（必須項目の欠け、`decision` が `save` / `retake` 以外など） |
+| 400 | `unsupported_protocol_version` | hello の `protocol_version` が 1 以外 |
+| 400 | `invalid_session_id` | session_start の `session_id` が UUID でない |
+| 400 | `missing_header:<name>` / `invalid_header:<name>` | frame のヘッダが無い・数値でない・`X-Format` / `X-Phase` が既定値以外 |
+| 400 | `empty_frame` / `bad_image` | frame の本文が空、または宣言した形式・サイズでデコードできない |
+| 401 | `unauthorized` | `X-Device-Id` / `X-Device-Key` の不一致（本文の検証より先に判定） |
+| 404 | `unknown_session` | 未知の `session_id` |
+| 409 | `nothing_to_save` | 採用フレームも候補も無い、または REVIEW 以外の状態での save |
+| 409 | `cancelled` | cancel 済みセッションへの timeout |
+| 413 | `frame_too_large` | frame の本文が 2 MiB を超える |
+
 ## タイムアウトと再試行
 
 - device は各リクエストに 3 秒のタイムアウトを置く。失敗しても同じフレームを再送しない（次のフレームを送る）。
