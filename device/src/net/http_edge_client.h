@@ -132,6 +132,12 @@ class HttpEdgeClient : public edge::EdgeClient {
   FrameMeta pending_{};
   edge::FrameResult result_{};
   bool result_fresh_ = false;
+  // accepted=true の結果は result_ とは別に持ち、App が受け取るまで消さない (sticky)。
+  // 後から届いた dropped=true の応答で上書きされないようにするため。
+  edge::FrameResult accepted_result_{};
+  bool accepted_pending_ = false;
+  // accepted を受けた世代ではフレームを送らない (sessionStart / sessionCancel で解除)。
+  bool frames_stopped_ = false;
   bool timeout_fresh_ = false;
   bool timeout_has_candidate_ = false;
   edge::PhotoInfo photo_{};

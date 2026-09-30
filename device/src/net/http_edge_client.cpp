@@ -144,6 +144,8 @@ void HttpEdgeClient::enqueue(const Command& c) {
 void HttpEdgeClient::clearMailboxesLocked() {
   has_frame_ = false;
   result_fresh_ = false;
+  accepted_pending_ = false;
+  frames_stopped_ = false;
   timeout_fresh_ = false;
   photo_fresh_ = false;
   if (cand_buf_ != nullptr) {
@@ -193,6 +195,10 @@ bool HttpEdgeClient::offerFrame(const app::Session& s, const camera_fb_t& fb, in
   }
   const uint32_t capture_ms = s.monotonicMs(millis());
   xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (frames_stopped_) {  // 採用済み: 以後のフレームは edge が dropped を返すだけなので送らない
+    xSemaphoreGive(mutex_);
+    return false;
+  }
   // write 面は App の所有。net タスクは send 面しか読まないので、ここで上書きしてよい。
   memcpy(slot_[write_idx_], fb.buf, fb.len);
   FrameMeta& m = pending_;
@@ -215,10 +221,17 @@ bool HttpEdgeClient::offerFrame(const app::Session& s, const camera_fb_t& fb, in
 bool HttpEdgeClient::pollResult(edge::FrameResult& out) {
   if (task_ == nullptr) return false;
   xSemaphoreTake(mutex_, portMAX_DELAY);
-  const bool fresh = result_fresh_;
-  if (fresh) {
+  bool fresh = false;
+  if (accepted_pending_) {
+    // accepted は他の結果より先に、App が受け取るまで何度でも返す。
+    out = accepted_result_;
+    accepted_pending_ = false;
+    result_fresh_ = false;  // accepted より後のフレームの結果 (dropped) は要らない
+    fresh = true;
+  } else if (result_fresh_) {
     out = result_;
     result_fresh_ = false;
+    fresh = true;
   }
   xSemaphoreGive(mutex_);
   return fresh;
@@ -416,6 +429,9 @@ bool HttpEdgeClient::currentGen(uint32_t gen) {
 
 bool HttpEdgeClient::takeFrame(FrameMeta& meta) {
   xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (has_frame_ && frames_stopped_ && pending_.gen == generation_) {
+    has_frame_ = false;  // 採用済みの世代のフレームは送らない
+  }
   const bool has = has_frame_;
   if (has) {
     // 面を入れ替えて所有権を移す (memcpy しない)。以後 App は旧 send 面に書く。
@@ -747,12 +763,29 @@ void HttpEdgeClient::sendFrame(const FrameMeta& meta) {
            fr.target_face_count, fr.servo_dx, fr.servo_dy, fr.accepted ? 1 : 0,
            static_cast<unsigned long>(rtt), fr.latency_ms);
 
+  // mailbox への書き込み順の約束 (mutex 下):
+  //  1. 古い世代 (sessionStart / sessionCancel より前) の結果は捨てる。
+  //  2. accepted=true は accepted_result_ に sticky に置き、スロットの保留フレームを捨てて
+  //     この世代のフレーム送信を止める。edge は採用後のフレームに dropped=true を返すので、
+  //     loop() が accepted を受け取る前に N+1 の応答が来ても accepted は消えない。
+  //  3. dropped=true は、まだ受け取られていない dropped でない結果を上書きしない。
   xSemaphoreTake(mutex_, portMAX_DELAY);
   if (meta.gen == generation_) {
-    result_ = fr;
-    result_fresh_ = true;
+    if (fr.accepted) {
+      accepted_result_ = fr;
+      accepted_pending_ = true;
+      frames_stopped_ = true;
+      has_frame_ = false;
+    } else if (!(fr.dropped && result_fresh_ && !result_.dropped)) {
+      result_ = fr;
+      result_fresh_ = true;
+    }
   }
   xSemaphoreGive(mutex_);
+  if (fr.accepted) {
+    ESP_LOGI(TAG, "accepted frame_id=%lu; stop sending frames for this session",
+             static_cast<unsigned long>(fr.frame_id));
+  }
 }
 
 bool HttpEdgeClient::fetchCandidateNow(const char* sid, uint8_t*& buf, size_t& len) {
