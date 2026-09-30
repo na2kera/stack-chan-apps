@@ -34,12 +34,19 @@ void setup() {
 
   // 2. スピーカー (マイクは止める)
   audio.speakerOn();
+#ifdef PHOTOBOOTH_AUDIO_DIAGNOSTICS
+  audio.diagnose("before-camera");
+#endif
 
   // 3. 首を正面へ。応答が無ければ head.update() が異常を検出し、固定カメラとして続行する。
   head.begin(millis());
 
   // 4. カメラ。失敗したら ERROR から始める。
   const bool camera_ok = camera.begin();
+#ifdef PHOTOBOOTH_AUDIO_DIAGNOSTICS
+  audio.diagnose("after-camera");
+  audio.diagnose("after-speaker-restart", true);
+#endif
 
   // 5. 状態機械
   photobooth.begin(millis(), camera_ok);
