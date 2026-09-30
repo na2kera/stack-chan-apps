@@ -35,6 +35,8 @@ pio run                                          # 初回は pioarduino とツ�
 
 カメラと内部 I2C の共有が原因と思われる不具合（カメラ初期化後にタッチ・スピーカー・サーボが効かない等）を切り分けるときは、`platformio.ini` の `build_flags` にある `-DPHOTOBOOTH_NO_CAMERA` のコメントを外してビルドする。カメラを初期化せず、プレビュー枠だけを描く。
 
+通常はカメラが M5 の内部 I2C バスを共有する。無音を調査するときは `-DPHOTOBOOTH_AUDIO_DIAGNOSTICS` を有効にすると、起動時にカメラ初期化前・直後・Speaker 再初期化後の3回、テスト音とアンプ状態のログが出る。`-DPHOTOBOOTH_CAMERA_OWN_I2C` を追加すると PR #1 のバス初期化方式を再現できる。比較条件とログの読み方は [音声調査](docs/investigations/camera-speaker-i2c.md) を参照。
+
 ボードパッケージとライブラリの版は `device/platformio.ini` で固定している。理由は同ファイルのコメントと [docs/design/step1-device.md](docs/design/step1-device.md) の「技術選定」を参照。
 
 ## 書き込み

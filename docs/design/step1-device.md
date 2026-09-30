@@ -98,7 +98,7 @@ device/
 
 ### camera（hal/camera）
 
-- 公式例どおり `M5.In_I2C.release()` の後 `esp_camera_init()`。設定は公式例の pin と `PIXFORMAT_RGB565` / `FRAMESIZE_QVGA` / `CAMERA_FB_IN_PSRAM` / `fb_count = 2` をそのまま使う。
+- `M5StackChan.begin()` が作った内部 I2C を共有して `esp_camera_init()`。`pin_sccb_sda = -1` / `pin_sccb_scl = -1` / `sccb_i2c_port = M5.In_I2C.getPort()` とし、`M5.In_I2C.release()` は呼ばない。映像信号の pin と `PIXFORMAT_RGB565` / `FRAMESIZE_QVGA` / `CAMERA_FB_IN_PSRAM` / `fb_count = 2` は公式例と同じ。初期化失敗や再試行でカメラを deinit しても、借りた内部 I2C バスは維持する。
 - `grab()` は `camera_fb_t*` を返し、使い終わったら必ず `release()`。プレビューは `M5.Display.pushImage(0, 0, 320, 240, (uint16_t*)fb->buf)` で全面描画してから文字を重ねる。
 - 候補フレームの保持は `heap_caps_malloc(len, MALLOC_CAP_SPIRAM)` に memcpy。
 - 初期化順序: `M5StackChan.begin()`（M5.begin + 頭部タッチ + IOエキスパンダ + サーボ）を先に済ませてからカメラを begin する。**カメラ SCCB と CoreS3 内部 I2C（画面タッチ・電源・オーディオコーデック）は同じ GPIO 11/12 を使う**ので、カメラ初期化後も画面タッチ・スピーカー・サーボが動くかが最大の実機リスク。動かない場合の切り分けとしてビルドフラグ `PHOTOBOOTH_NO_CAMERA`（カメラを初期化せずプレビュー枠だけ描く）を用意する。
@@ -118,6 +118,8 @@ device/
 - `playAnnounce()` は `M5.Speaker.playWav(start, end - start)`。`isPlaying()` を App が監視して完了を判定する。
 - `speakerOn()` = `M5.Mic.end(); M5.Speaker.begin(); M5.Speaker.setVolume(config::SPEAKER_VOLUME);`、`micOn()` はその逆。
 - シャッター音は `captured.wav`。
+- `Speaker.begin()` の失敗時はモードを Off にしてログを出し、WAV 再生を開始しない。
+- `PHOTOBOOTH_AUDIO_DIAGNOSTICS` で、カメラ初期化前・直後・Speaker 再初期化後のアンプ状態と 1 kHz / 250 ms のテスト音を比較できる。調査結果と比較手順は [音声調査](../investigations/camera-speaker-i2c.md) を参照。
 
 ### input（hal/input）
 

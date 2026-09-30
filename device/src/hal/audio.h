@@ -23,6 +23,11 @@ class Audio {
   bool isPlaying() const;
   void stop();
 
+#ifdef PHOTOBOOTH_AUDIO_DIAGNOSTICS
+  // 起動時だけ使用。テスト音の終了を待つため、状態機械を開始する前に呼ぶ。
+  void diagnose(const char* stage, bool restart_speaker = false);
+#endif
+
   Mode mode() const { return mode_; }
 
  private:

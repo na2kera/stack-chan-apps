@@ -14,7 +14,7 @@ namespace hal {
 
 class Camera {
  public:
-  // M5.In_I2C.release() の後に esp_camera_init()。M5StackChan.begin() の後に呼ぶこと。
+  // M5 の内部 I2C を共有して esp_camera_init()。M5StackChan.begin() の後に呼ぶこと。
   // 失敗しても再度呼べる (ERROR の「再試行」)。
   bool begin();
 
