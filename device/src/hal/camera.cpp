@@ -1,6 +1,7 @@
 #include "hal/camera.h"
 
 #include <M5Unified.h>
+#include <driver/i2c_master.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 
@@ -12,14 +13,23 @@ namespace {
 constexpr const char* TAG = "camera";
 
 #ifndef PHOTOBOOTH_NO_CAMERA
-// M5Stack 公式カメラ例 (StackChan) と同じ設定。
+// 映像信号のピンは M5Stack 公式カメラ例 (StackChan) と同じ設定。
 camera_config_t makeConfig() {
   camera_config_t c = {};
   c.pin_pwdn = -1;
   c.pin_reset = -1;
   c.pin_xclk = -1;
+#ifdef PHOTOBOOTH_CAMERA_OWN_I2C
+  // PR #1 のバス所有権の切替を再現する、実機比較用の設定。
   c.pin_sccb_sda = 12;
   c.pin_sccb_scl = 11;
+  c.sccb_i2c_port = -1;
+#else
+  // SDA=-1 が既存バスを利用する条件。ポート番号だけの指定では共有にならない。
+  c.pin_sccb_sda = -1;
+  c.pin_sccb_scl = -1;
+  c.sccb_i2c_port = M5.In_I2C.getPort();
+#endif
   c.pin_d7 = 47;
   c.pin_d6 = 48;
   c.pin_d5 = 16;
@@ -40,7 +50,6 @@ camera_config_t makeConfig() {
   c.fb_count = 2;
   c.fb_location = CAMERA_FB_IN_PSRAM;
   c.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  c.sccb_i2c_port = -1;
   return c;
 }
 #endif
@@ -57,8 +66,23 @@ bool Camera::begin() {
     return true;
   }
   const uint32_t t0 = millis();
-  // カメラ SCCB は CoreS3 内部 I2C (GPIO 12/11) と同じピン。M5 側の I2C を先に手放す。
+#ifdef PHOTOBOOTH_CAMERA_OWN_I2C
+  ESP_LOGW(TAG, "PHOTOBOOTH_CAMERA_OWN_I2C: releasing M5 internal I2C");
   M5.In_I2C.release();
+#else
+  // M5StackChan.begin() が作ったバスを借りる。カメラの deinit / 再試行でも
+  // 内部 I2C を破棄せず、AW88298・タッチ・電源制御が引き続き使えるようにする。
+  i2c_master_bus_handle_t bus = nullptr;
+  const esp_err_t bus_err = i2c_master_get_bus_handle(M5.In_I2C.getPort(), &bus);
+  if (bus_err != ESP_OK || bus == nullptr) {
+    last_error_ = bus_err == ESP_OK ? ESP_ERR_INVALID_STATE : bus_err;
+    ESP_LOGE(TAG, "internal I2C unavailable: 0x%x (%s)", last_error_,
+             esp_err_to_name(static_cast<esp_err_t>(last_error_)));
+    return false;
+  }
+  ESP_LOGI(TAG, "sharing internal I2C port %d (SDA %d, SCL %d)",
+           M5.In_I2C.getPort(), M5.In_I2C.getSDA(), M5.In_I2C.getSCL());
+#endif
   const camera_config_t config = makeConfig();
   const esp_err_t err = esp_camera_init(&config);
   last_error_ = err;
