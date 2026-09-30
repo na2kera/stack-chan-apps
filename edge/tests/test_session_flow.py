@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import pytest
 from conftest import (
     AUTH,
     FakeAnalyzer,
+    FakeMonotonic,
     face,
     frame_headers,
     jpeg_body,
@@ -18,7 +22,8 @@ from conftest import (
 )
 from fastapi.testclient import TestClient
 
-from edge.session import PhotoboothService, State
+from edge.api import create_app
+from edge.session import PhotoboothService, SessionStore, State
 
 
 def start(client: TestClient) -> str:
@@ -287,3 +292,56 @@ def test_logs_have_no_bytes_tokens_or_urls(
     assert "\\xff\\xd8" not in text and "test-key" not in text
     ready = next(json.loads(x) for x in lines if json.loads(x)["event"] == "photo_ready")
     assert ready["expires_at"] == "2026-09-30T22:00:00+09:00"
+
+
+class SlowGallery:
+    """upload() が写真を登録したあと、release されるまで戻らない gallery。"""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.uploaded = threading.Event()
+        self.release = threading.Event()
+        self.results: list = []
+
+    def upload(self, jpeg, session_id, captured_at):
+        res = self.inner.upload(jpeg, session_id, captured_at)
+        self.results.append(res)
+        self.uploaded.set()
+        assert self.release.wait(5)
+        return res
+
+    def delete(self, photo_id: str) -> None:
+        self.inner.delete(photo_id)
+
+
+@pytest.mark.parametrize("interrupt", ["cancel", "restart", "sweep"])
+def test_upload_finished_after_interrupt_is_deleted(cfg, gallery, clock, interrupt) -> None:
+    analyzer = FakeAnalyzer([[face()]])
+    slow = SlowGallery(gallery)
+    mono = FakeMonotonic()
+    executor = ThreadPoolExecutor(1)
+    service = PhotoboothService(
+        cfg, analyzer, slow, store=SessionStore(clock=mono), executor=executor, wall_clock=clock
+    )
+    client = TestClient(create_app(service, cfg.auth, gallery, background_sweep=False))
+    sid = start(client)
+    for i, phase in enumerate(["compose", "capture", "capture"], 1):
+        send(client, sid, i, phase)
+    r = client.post(f"/v1/sessions/{sid}/review", json={"decision": "save"}, headers=AUTH)
+    assert r.status_code == 202
+    assert slow.uploaded.wait(5)
+    path = urlparse(slow.results[0].photo_url).path
+    assert client.get(path).status_code == 200  # アップロード自体は終わっている
+
+    if interrupt == "cancel":
+        client.post(f"/v1/sessions/{sid}/cancel", headers=AUTH)
+    elif interrupt == "restart":
+        client.post("/v1/sessions", json={"session_id": sid}, headers=AUTH)
+    else:
+        mono.t += 301
+        service.sweep()
+    slow.release.set()
+    executor.shutdown(wait=True)
+
+    assert client.get(path).status_code in (404, 410)
+    assert client.get(path + ".jpg").status_code in (404, 410)

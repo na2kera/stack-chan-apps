@@ -449,12 +449,26 @@ class PhotoboothService:
             )
             return
         with session.lock:
-            if session.generation != generation or session.state != State.UPLOADING:
-                log_event("upload_discarded", session_id=session.session_id)
-                return
-            session.photo = PhotoInfo(result.photo_url, result.share_url, result.expires_at)
-            session.state = State.DONE
-            session.discard_frames()  # 公開後は edge にバイト列を残さない
+            stale = session.generation != generation or session.state != State.UPLOADING
+            if not stale:
+                session.photo = PhotoInfo(result.photo_url, result.share_url, result.expires_at)
+                session.state = State.DONE
+                session.discard_frames()  # 公開後は edge にバイト列を残さない
+        if stale:
+            # アップロード中に cancel / 再 start / 期限切れ掃除があった: 公開した写真を消す
+            deleted = True
+            try:
+                self.gallery.delete(result.photo_id)
+            except Exception as exc:  # noqa: BLE001
+                deleted = False
+                log_event("gallery_delete_failed", logging.ERROR, reason=type(exc).__name__)
+            log_event(
+                "upload_discarded",
+                session_id=session.session_id,
+                frame_id=frame.frame_id,
+                deleted=deleted,
+            )
+            return
         log_event(
             "photo_ready",
             session_id=session.session_id,

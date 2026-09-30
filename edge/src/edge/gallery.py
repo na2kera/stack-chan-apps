@@ -22,6 +22,7 @@ X_INTENT = "https://x.com/intent/tweet?text="
 
 @dataclass(frozen=True)
 class UploadResult:
+    photo_id: str  # delete() に渡す識別子 (mock ではトークン。ログには出さない)
     photo_url: str
     share_url: str
     expires_at: datetime  # UTC
@@ -29,6 +30,10 @@ class UploadResult:
 
 class Gallery(Protocol):
     def upload(self, jpeg: bytes, session_id: str, captured_at: datetime) -> UploadResult: ...
+
+    def delete(self, photo_id: str) -> None:
+        """写真を直ちに消す (画像もページも配信しない)。未知の ID は無視する。"""
+        ...
 
 
 @dataclass
@@ -88,10 +93,20 @@ class MockGallery:
                 self._photos[token] = photo
                 self._by_session[(session_id, digest)] = token
         return UploadResult(
+            photo_id=photo.token,
             photo_url=f"{self._base}/mock/p/{photo.token}",
             share_url=f"{self._base}/mock/share/x",
             expires_at=photo.expires_at,
         )
+
+    def delete(self, photo_id: str) -> None:
+        """画像とメタデータを直ちに消す。以後その URL は 404。"""
+        with self._lock:
+            photo = self._photos.pop(photo_id, None)
+            if photo is not None:
+                photo.jpeg = None
+                if self._by_session.get((photo.session_id, photo.digest)) == photo_id:
+                    del self._by_session[(photo.session_id, photo.digest)]
 
     # ---- 閲覧 (スマホ / ブラウザ) から ----
 
