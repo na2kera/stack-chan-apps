@@ -1,0 +1,28 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# PlatformIO
+device/.pio/
+device/.clang_complete
+device/.gcc-flags.json
+device/include/config.h
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# secrets / local config (commit only *.example)
+.env
+*.local.toml
+edge/config.toml
+gallery/config.toml
+
+# runtime data
+gallery/storage/
+edge/tmp/
