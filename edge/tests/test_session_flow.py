@@ -345,3 +345,59 @@ def test_upload_finished_after_interrupt_is_deleted(cfg, gallery, clock, interru
 
     assert client.get(path).status_code in (404, 410)
     assert client.get(path + ".jpg").status_code in (404, 410)
+
+
+def _retake(client: TestClient, sid: str):
+    return client.post(f"/v1/sessions/{sid}/review", json={"decision": "retake"}, headers=AUTH)
+
+
+def test_retake_only_in_review_or_timeout(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    sid = start(client)
+    r = _retake(client, sid)  # COMPOSE
+    assert r.status_code == 409 and r.json() == {"error": "nothing_to_retake"}
+    analyzer.push([face(smile=0.1)])
+    send(client, sid, 1, "capture")
+    assert _retake(client, sid).status_code == 409  # CAPTURE
+
+    client.post(f"/v1/sessions/{sid}/timeout", headers=AUTH)
+    assert _retake(client, sid).status_code == 200  # REVIEW (候補あり)
+
+    analyzer.push([])
+    send(client, sid, 1, "capture")
+    client.post(f"/v1/sessions/{sid}/timeout", headers=AUTH)
+    assert _retake(client, sid).status_code == 200  # TIMEOUT (候補なし)
+
+    # 採用 → save → DONE では撮り直せない (device は新しいセッションを始める)
+    analyzer.push([face()], [face()], [face()])
+    for i, phase in enumerate(["compose", "capture", "capture"], 1):
+        send(client, sid, i, phase)
+    client.post(f"/v1/sessions/{sid}/review", json={"decision": "save"}, headers=AUTH)
+    assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).json()["status"] == "ready"
+    assert _retake(client, sid).status_code == 409
+    assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).json()["status"] == "ready"
+
+    client.post(f"/v1/sessions/{sid}/cancel", headers=AUTH)
+    assert _retake(client, sid).status_code == 409  # CANCELLED
+
+
+def test_retake_rejected_while_uploading(cfg, gallery, clock) -> None:
+    slow = SlowGallery(gallery)
+    executor = ThreadPoolExecutor(1)
+    service = PhotoboothService(
+        cfg,
+        FakeAnalyzer([[face()]]),
+        slow,
+        store=SessionStore(clock=FakeMonotonic()),
+        executor=executor,
+        wall_clock=clock,
+    )
+    client = TestClient(create_app(service, cfg.auth, gallery, background_sweep=False))
+    sid = start(client)
+    for i, phase in enumerate(["compose", "capture", "capture"], 1):
+        send(client, sid, i, phase)
+    client.post(f"/v1/sessions/{sid}/review", json={"decision": "save"}, headers=AUTH)
+    assert slow.uploaded.wait(5)
+    assert _retake(client, sid).status_code == 409
+    slow.release.set()
+    executor.shutdown(wait=True)
+    assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).json()["status"] == "ready"

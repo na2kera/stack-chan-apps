@@ -72,6 +72,7 @@
 | 404 | `unknown_session` | 未知の `session_id` |
 | 409 | `nothing_to_save` | 採用フレームも候補も無い、または REVIEW 以外の状態での save |
 | 409 | `cancelled` | cancel 済みセッションへの timeout |
+| 409 | `nothing_to_retake` | REVIEW / TIMEOUT 以外 (撮影中・アップロード中・公開後・cancel 後) での retake |
 | 413 | `frame_too_large` | frame の本文が 2 MiB を超える |
 
 ## タイムアウトと再試行

@@ -405,6 +405,10 @@ class PhotoboothService:
         session = self.store.get(session_id)
         if decision == "retake":
             with session.lock:
+                # 撮り直しは REVIEW (候補あり・採用済み) と TIMEOUT (候補なし) のときだけ。
+                # 公開後 (DONE) や撮影中に reset すると写真や進行中の撮影を壊すので断る
+                if session.state not in (State.REVIEW, State.TIMEOUT):
+                    raise ServiceError(409, "nothing_to_retake")
                 session.reset()  # 保持フレームを破棄して新しい 10 秒へ
             log_event("review", session_id=session_id, reason="retake", state=State.COMPOSE.value)
             return 200, {"ok": True}
