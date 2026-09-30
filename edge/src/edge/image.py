@@ -101,7 +101,12 @@ def decode_frame(
     if fmt == "rgb565":
         return decode_rgb565(data, width, height, byte_order, max_width, max_height)
     if fmt == "jpeg":
-        return decode_jpeg(data, max_width, max_height)
+        rgb = decode_jpeg(data, max_width, max_height)
+        if rgb.shape[:2] != (height, width):
+            raise ImageDecodeError(
+                f"jpeg is {rgb.shape[1]}x{rgb.shape[0]}, declared {width}x{height}"
+            )
+        return rgb
     raise ImageDecodeError(f"unsupported format {fmt!r}")
 
 

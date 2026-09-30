@@ -523,3 +523,25 @@ def test_head_interval_uses_edge_clock_not_capture_ms(
     assert send(client, sid, 2, "compose", capture_ms=0)["servo_dx"] == 0
     mono.t += 0.5
     assert send(client, sid, 3, "compose", capture_ms=1)["servo_dx"] != 0
+
+
+@pytest.mark.parametrize(
+    ("fmt", "width", "height"),
+    [
+        ("jpeg", 64, 48),  # 実サイズ 32x24 と宣言が違う
+        ("jpeg", 32, 25),
+        ("jpeg", 0, 24),
+        ("jpeg", 32, -1),
+        ("rgb565", 0, 24),
+        ("rgb565", -32, -24),
+    ],
+)
+def test_declared_size_must_match(
+    client: TestClient, analyzer: FakeAnalyzer, fmt: str, width: int, height: int
+) -> None:
+    sid = start(client)
+    body = jpeg_body() if fmt == "jpeg" else rgb565_body()
+    h = frame_headers(1, "capture", fmt=fmt, width=width, height=height)
+    r = client.post(f"/v1/sessions/{sid}/frames", content=body, headers=h)
+    assert r.status_code == 400 and r.json() == {"error": "bad_image"}
+    assert analyzer.calls == 0
