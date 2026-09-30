@@ -5,7 +5,7 @@ description = "StackChan photobooth edge service (face analysis, head control, c
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "mediapipe==1.0.1",
+    "mediapipe==0.10.35",
     "fastapi==0.142.2",
     "uvicorn[standard]==0.54.0",
     "numpy==2.4.6",

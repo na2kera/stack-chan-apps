@@ -25,7 +25,7 @@ device の Wi-Fi 接続と統合は 2b（`docs/design/step2b-device-edge.md`、�
 | Python | 3.11（uv 管理） | spec §3。`uv python install 3.11` |
 | パッケージ管理 | uv（`pyproject.toml` + `uv.lock`） | 版固定と再現 |
 | HTTP | FastAPI 0.142.2 + uvicorn 0.54.0 | spec §3 |
-| 顔判定 | mediapipe 1.0.1（Tasks API `FaceLandmarker`、VIDEO モード、`num_faces=4`, `output_face_blendshapes=True`） | spec §3。**1.0 系で Tasks API が変わっていたら 0.10 系の最新に固定し直して報告する** |
+| 顔判定 | mediapipe 0.10.35（Tasks API `FaceLandmarker`、VIDEO モード、`num_faces=4`, `output_face_blendshapes=True`、CPU delegate） | spec §3。1.0.1 の macOS arm64 版は CPU delegate を指定しても初期化時に Metal の GPU サービスを要求して abort する（`graph_service.h: Service is unavailable`）ため、同じ API で CPU だけで動く 0.10 系の最新に固定した（spec §3「PC GPU は必須にしない」） |
 | モデル | `face_landmarker.task`（float16）を `edge/models/` に置く（.gitignore） | `tools/download_model.py` で取得。URL: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task` |
 | 画像 | numpy 2.4 + Pillow 12（RGB565 デコード、JPEG エンコード、ブレ計算） | OpenCV は mediapipe の依存で入るが、edge 本体では使わない（webcam ツールだけ使う） |
 | テスト | pytest + httpx（FastAPI TestClient） | |
