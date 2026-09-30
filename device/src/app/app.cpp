@@ -582,17 +582,20 @@ void App::drawDeviceReview() {
                    candidate_.height());
     review_buttons_ = ui::kReviewButtons;
   } else {
+    // 判定なしの撮影 (顔の有無が分からない) か、edge に候補があるのに表示できなかったとき。
+    // 顔なしとは限らないので「候補の写真がありません」のまま。
     ESP_LOGW(TAG, "review without candidate");
-    ui::drawReview(stateTitle(State::Review), nullptr, 0, 0);
+    ui::drawReview(stateTitle(State::Review), nullptr, 0, 0, ui::kReviewNoCandidate);
     review_buttons_ = ui::kReviewButtonsNoCandidate;
   }
 }
 
 void App::showReview(bool edge_has_candidate) {
   if (!edge_has_candidate) {
-    // edge が顔の無い時間切れと判断した: 保存できないので「撮り直す」だけ。
-    ESP_LOGI(TAG, "review: edge has no candidate");
-    ui::drawReview(stateTitle(State::Review), nullptr, 0, 0);
+    // edge は顔 0 のフレームを候補にしないので、候補なし = 10 秒間顔が見つからなかった
+    // (spec §9)。保存できないので「撮り直す」だけ。
+    ESP_LOGI(TAG, "review: edge has no candidate (no face)");
+    ui::drawReview(stateTitle(State::Review), nullptr, 0, 0, ui::kReviewNoFace);
     review_buttons_ = ui::kReviewButtonsNoCandidate;
     return;
   }

@@ -183,7 +183,8 @@ void drawPreviewPlaceholder() {
   d.endWrite();
 }
 
-void drawReview(const char* title, const uint16_t* pixels, int16_t w, int16_t h) {
+void drawReview(const char* title, const uint16_t* pixels, int16_t w, int16_t h,
+                const char* empty_text) {
   auto& d = M5.Display;
   d.startWrite();
   if (pixels != nullptr) {
@@ -193,8 +194,7 @@ void drawReview(const char* title, const uint16_t* pixels, int16_t w, int16_t h)
     drawButtons(kLabels, kReviewButtons);
   } else {
     clearWithTitle(title);
-    drawTextBox("候補の写真がありません", kBody, font::body(), color::text(), color::bg(),
-                Align::Center);
+    drawTextBox(empty_text, kBody, font::body(), color::text(), color::bg(), Align::Center);
     static const char* const kLabels[kReviewButtonsNoCandidate] = {"撮り直す"};
     drawButtons(kLabels, kReviewButtonsNoCandidate);
   }

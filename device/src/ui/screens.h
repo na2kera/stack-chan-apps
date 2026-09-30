@@ -52,8 +52,14 @@ void drawCaptureFrame(const uint16_t* pixels, int16_t w, int16_t h, bool with_ba
 // カメラが無い (PHOTOBOOTH_NO_CAMERA / 取得失敗) ときのプレビュー枠。
 void drawPreviewPlaceholder();
 
-// REVIEW: 候補フレーム + 「保存する」「撮り直す」。pixels が nullptr なら「撮り直す」だけ。
-void drawReview(const char* title, const uint16_t* pixels, int16_t w, int16_t h);
+// REVIEW で候補が無いときの文言。
+constexpr const char* kReviewNoFace = "顔が見つからなかったよ";      // spec §9: 顔なしで時間切れ
+constexpr const char* kReviewNoCandidate = "候補の写真がありません";  // 顔の有無が分からないとき
+
+// REVIEW: 候補フレーム + 「保存する」「撮り直す」。pixels が nullptr なら empty_text と
+// 「撮り直す」だけ。
+void drawReview(const char* title, const uint16_t* pixels, int16_t w, int16_t h,
+                const char* empty_text = kReviewNoCandidate);
 // REVIEW: edge の候補 JPEG を全面に描き、タイトル帯と「保存する」「撮り直す」を重ねる。
 // JPEG を描けなければ何も描かずに false。
 bool drawReviewJpeg(const char* title, const uint8_t* jpeg, size_t len);
