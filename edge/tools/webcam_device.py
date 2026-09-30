@@ -21,11 +21,15 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Any
 
-import cv2
 import httpx
 import numpy as np
 
 from edge.image import encode_rgb565
+
+try:
+    import cv2
+except ImportError:  # CI などで GUI ライブラリが無いとき。判定部分のテストだけは読めるようにする
+    cv2 = None  # type: ignore[assignment]
 
 SERVO_X_NEUTRAL = 0  # device の正面姿勢 (config.example.h と同じ)
 SERVO_Y_NEUTRAL = 450
@@ -168,6 +172,22 @@ def result_lines(res: dict[str, Any] | None, phase: str, left: float) -> list[tu
 # ---- フロー ----
 
 
+def accept_result(
+    res: dict[str, Any] | None, phase: str, elapsed: float, countdown_sec: float
+) -> bool:
+    """frame_result の accepted を採用してよいか。
+
+    device と同じく、CAPTURE 開始から countdown_sec 経過後に返った accepted は無視する
+    (spec §6.2「10 秒の終了後に届いた結果は採用しない」、protocol.md frame_result)。
+    """
+    return (
+        res is not None
+        and bool(res.get("accepted"))
+        and phase == "capture"
+        and elapsed < countdown_sec
+    )
+
+
 def run_phases(
     edge: EdgeClient,
     cap: cv2.VideoCapture,
@@ -181,7 +201,7 @@ def run_phases(
     for phase, duration in (("compose", opt.compose_sec), ("capture", opt.capture_sec)):
         t_phase = time.monotonic()
         period = 1.0 / opt.fps
-        while (left := duration - (time.monotonic() - t_phase)) > 0:
+        while time.monotonic() - t_phase < duration:
             t_frame = time.monotonic()
             rgb = grab(cap, opt)
             fid = next_id[0]
@@ -197,11 +217,14 @@ def run_phases(
                 kept[fid] = rgb
                 for old in [k for k in kept if k < fid - 100]:
                     del kept[old]
-            show(rgb, result_lines(res, phase, left))
-            if res and res.get("accepted") and phase == "capture":
+            elapsed = time.monotonic() - t_phase
+            show(rgb, result_lines(res, phase, max(0.0, duration - elapsed)))
+            if accept_result(res, phase, elapsed, duration):
                 show(rgb, [("captured!", GREEN)])
                 cv2.waitKey(800)
                 return True
+            if phase == "capture" and elapsed >= duration:
+                break  # 10 秒経過後に返った結果 (accepted を含む) は使わず timeout へ
             time.sleep(max(0.0, period - (time.monotonic() - t_frame)))
     return False
 
@@ -280,6 +303,9 @@ def main() -> int:
     ap.add_argument("--compose-sec", type=float, default=5.0)
     ap.add_argument("--open", action="store_true", help="保存後に写真ページをブラウザで開く")
     args = ap.parse_args()
+    if cv2 is None:
+        print("OpenCV (cv2) を import できません。uv sync を確認してください", file=sys.stderr)
+        return 1
 
     edge = EdgeClient(args.edge, args.device_id, args.key)
     try:
