@@ -76,8 +76,10 @@ void drawTextBox(const char* text, const Rect& rect, const lgfx::IFont* f, uint1
 // (条件を満たせなければ 0)。この領域の外には描かない。
 int drawQr(const char* text, int16_t x, int16_t y, int16_t size);
 
-// RGB565 (esp_camera のバイト順) の画像を (0, 0) に描く。exclude の矩形には描かない
-// (その上に重ねる文字を毎フレーム描き直さずに済ませ、ちらつきを防ぐ)。
-void drawFrameExcept(const uint16_t* pixels, int16_t w, int16_t h, const Rect* exclude);
+// RGB565 (esp_camera のバイト順) の画像を (0, 0) に描く。exclude の矩形と、y >= max_y の行には
+// 描かない (その上に重ねる文字を毎フレーム描き直さずに済ませ、ちらつきを防ぐ)。
+// max_y < 0 は画像の高さまで描く。
+void drawFrameExcept(const uint16_t* pixels, int16_t w, int16_t h, const Rect* exclude,
+                     int16_t max_y = -1);
 
 }  // namespace ui

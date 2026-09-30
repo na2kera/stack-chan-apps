@@ -21,8 +21,10 @@ constexpr int16_t kMouthY = 112;
 constexpr int16_t kMouthR = 44;
 
 // ---- プレビューに重ねる領域 ----
-// COMPOSE: 下端の案内帯
+// COMPOSE / CAPTURE: 下端の案内帯
 constexpr Rect kComposeBand{0, kScreenH - 40, kScreenW, 40};
+// IDLE: 右下の接続表示 (「PC接続中」/「PC未接続」)
+constexpr Rect kIdleStatus{kScreenW - 90, kScreenH - 22, 90, 22};
 // CAPTURE: 右上の人数・残り秒数
 constexpr Rect kCaptureBox{kScreenW - 124, 0, 124, 84};
 
@@ -44,12 +46,39 @@ void drawEye(int16_t cx, bool open) {
   }
 }
 
+void drawIdleStatusText(bool pc_online) {
+  auto& d = M5.Display;
+  const Rect& r = kIdleStatus;
+  d.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
+  d.setFont(font::small());
+  d.setTextColor(color::muted(), TFT_BLACK);
+  d.setTextDatum(textdatum_t::bottom_right);
+  d.drawString(pc_online ? "PC接続中" : "PC未接続", kScreenW - 6, kScreenH - 4);
+}
+
+void drawBand(const char* text) {
+  const Rect& r = kComposeBand;
+  M5.Display.fillRect(r.x, r.y, r.w, r.h, color::overlayBg());
+  drawTextBox(text, r, font::body(), color::overlayText(), color::overlayBg(), Align::Center);
+}
+
 }  // namespace
 
 void begin() {
   auto& d = M5.Display;
   d.fillScreen(TFT_BLACK);
   ESP_LOGI(TAG, "display %dx%d", d.width(), d.height());
+}
+
+void drawBootMessage(const char* text) {
+  auto& d = M5.Display;
+  d.startWrite();
+  d.fillScreen(TFT_BLACK);
+  d.setFont(font::body());
+  d.setTextColor(TFT_WHITE, TFT_BLACK);
+  d.setTextDatum(textdatum_t::middle_center);
+  d.drawString(text, kScreenW / 2, kScreenH / 2);
+  d.endWrite();
 }
 
 void drawIdle(bool pc_online, const char* warning) {
@@ -66,12 +95,8 @@ void drawIdle(bool pc_online, const char* warning) {
   d.setTextDatum(textdatum_t::middle_center);
   d.drawString("写真を撮りたい、と言ってね", kScreenW / 2, 196);
 
+  drawIdleStatusText(pc_online);
   d.setFont(font::small());
-  if (!pc_online) {
-    d.setTextColor(color::muted(), TFT_BLACK);
-    d.setTextDatum(textdatum_t::bottom_right);
-    d.drawString("PC未接続", kScreenW - 6, kScreenH - 4);
-  }
   if (warning != nullptr) {
     d.setTextColor(color::warn(), TFT_BLACK);
     d.setTextDatum(textdatum_t::bottom_left);
@@ -87,6 +112,12 @@ void updateIdleEyes(bool open) {
   M5.Display.endWrite();
 }
 
+void updateIdleStatus(bool pc_online) {
+  M5.Display.startWrite();
+  drawIdleStatusText(pc_online);
+  M5.Display.endWrite();
+}
+
 void drawAnnounce(const char* title) {
   M5.Display.startWrite();
   clearWithTitle(title);
@@ -95,12 +126,9 @@ void drawAnnounce(const char* title) {
   M5.Display.endWrite();
 }
 
-void drawComposeOverlay() {
-  const Rect& r = kComposeBand;
+void drawComposeOverlay(const char* band_text) {
   M5.Display.startWrite();
-  M5.Display.fillRect(r.x, r.y, r.w, r.h, color::overlayBg());
-  drawTextBox("みんな画面に入ってね", r, font::body(), color::overlayText(), color::overlayBg(),
-              Align::Center);
+  drawBand(band_text);
   M5.Display.endWrite();
 }
 
@@ -108,16 +136,18 @@ void drawComposeFrame(const uint16_t* pixels, int16_t w, int16_t h) {
   drawFrameExcept(pixels, w, h, &kComposeBand);
 }
 
-void drawCaptureOverlay(int remaining_sec, int face_count) {
+void drawCaptureOverlay(int remaining_sec, int face_count, int target) {
   auto& d = M5.Display;
   const Rect& r = kCaptureBox;
   d.startWrite();
   d.fillRect(r.x, r.y, r.w, r.h, color::overlayBg());
-  char buf[24];
+  char buf[40];
   if (face_count < 0) {
     snprintf(buf, sizeof(buf), "人数 --");
+  } else if (target <= 0) {
+    snprintf(buf, sizeof(buf), "人数 %d/--", face_count);
   } else {
-    snprintf(buf, sizeof(buf), "人数 %d", face_count);
+    snprintf(buf, sizeof(buf), "人数 %d/%d", face_count, target);
   }
   d.setFont(font::body());
   d.setTextColor(color::overlayText(), color::overlayBg());
@@ -129,8 +159,16 @@ void drawCaptureOverlay(int remaining_sec, int face_count) {
   d.endWrite();
 }
 
-void drawCaptureFrame(const uint16_t* pixels, int16_t w, int16_t h) {
-  drawFrameExcept(pixels, w, h, &kCaptureBox);
+void drawCaptureBand(const char* band_text) {
+  M5.Display.startWrite();
+  drawBand(band_text);
+  M5.Display.endWrite();
+}
+
+void drawCaptureFrame(const uint16_t* pixels, int16_t w, int16_t h, bool with_band) {
+  // 人数・残り秒数の箱 (右上) と案内帯 (下端) は重ならないので、帯より上だけを描く。
+  static_assert(kCaptureBox.y + kCaptureBox.h <= kComposeBand.y, "box overlaps band");
+  drawFrameExcept(pixels, w, h, &kCaptureBox, with_band ? kComposeBand.y : -1);
 }
 
 void drawPreviewPlaceholder() {
@@ -163,11 +201,27 @@ void drawReview(const char* title, const uint16_t* pixels, int16_t w, int16_t h)
   d.endWrite();
 }
 
-void drawUploading(const char* title) {
+bool drawReviewJpeg(const char* title, const uint8_t* jpeg, size_t len) {
+  auto& d = M5.Display;
+  d.startWrite();
+  const bool ok = d.drawJpg(jpeg, len, 0, 0);
+  if (ok) {
+    drawTitleBar(title);
+    static const char* const kLabels[kReviewButtons] = {"保存する", "撮り直す"};
+    drawButtons(kLabels, kReviewButtons);
+  }
+  d.endWrite();
+  if (!ok) {
+    ESP_LOGW(TAG, "drawJpg failed (%u bytes)", static_cast<unsigned>(len));
+  }
+  return ok;
+}
+
+void drawUploading(const char* title, bool captured) {
   M5.Display.startWrite();
   clearWithTitle(title);
-  drawTextBox("写真を準備中", kBodyNoButtons, font::heading(), color::text(), color::bg(),
-              Align::Center);
+  drawTextBox(captured ? "撮れたよ\n写真を準備中" : "写真を準備中", kBodyNoButtons,
+              font::heading(), color::text(), color::bg(), Align::Center);
   M5.Display.endWrite();
 }
 
@@ -228,6 +282,23 @@ void drawError(const char* title, const char* reason) {
   drawTextBox(reason, kBody, font::heading(), color::text(), color::bg(), Align::Center);
   static const char* const kLabels[kErrorButtons] = {"再試行", "終了"};
   drawButtons(kLabels, kErrorButtons);
+  M5.Display.endWrite();
+}
+
+void drawDiag(const char* title, const char* body) {
+  M5.Display.startWrite();
+  clearWithTitle(title);
+  updateDiagBody(body);
+  static const char* const kLabels[kDiagButtons] = {"再接続", "判定なしで撮影"};
+  drawButtons(kLabels, kDiagButtons);
+  M5.Display.endWrite();
+}
+
+void updateDiagBody(const char* body) {
+  const Rect& r = kBody;
+  M5.Display.startWrite();
+  M5.Display.fillRect(r.x, r.y, r.w, r.h, color::bg());
+  drawTextBox(body, r, font::small(), color::text(), color::bg(), Align::Left);
   M5.Display.endWrite();
 }
 

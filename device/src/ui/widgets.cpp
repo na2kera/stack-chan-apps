@@ -180,10 +180,18 @@ int drawQr(const char* text, int16_t x, int16_t y, int16_t size) {
   return 0;
 }
 
-void drawFrameExcept(const uint16_t* pixels, int16_t w, int16_t h, const Rect* exclude) {
+void drawFrameExcept(const uint16_t* pixels, int16_t w, int16_t h, const Rect* exclude,
+                     int16_t max_y) {
   auto& d = M5.Display;
+  const int16_t limit = (max_y < 0 || max_y > h) ? h : max_y;
   if (exclude == nullptr) {
-    d.pushImage(0, 0, w, h, pixels);
+    if (limit == h) {
+      d.pushImage(0, 0, w, h, pixels);
+    } else {
+      d.setClipRect(0, 0, w, limit);
+      d.pushImage(0, 0, w, h, pixels);
+      d.clearClipRect();
+    }
     return;
   }
   const Rect& e = *exclude;
@@ -194,7 +202,8 @@ void drawFrameExcept(const uint16_t* pixels, int16_t w, int16_t h, const Rect* e
       {0, e.y, e.x, e.h},
       {static_cast<int16_t>(e.x + e.w), e.y, static_cast<int16_t>(w - (e.x + e.w)), e.h},
   };
-  for (const Rect& r : parts) {
+  for (Rect r : parts) {
+    r.h = static_cast<int16_t>(std::min<int>(r.y + r.h, limit) - r.y);  // max_y より下は描かない
     if (r.w <= 0 || r.h <= 0) continue;
     d.setClipRect(r.x, r.y, r.w, r.h);
     d.pushImage(0, 0, w, h, pixels);
