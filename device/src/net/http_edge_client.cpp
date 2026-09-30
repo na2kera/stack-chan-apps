@@ -513,15 +513,32 @@ void HttpEdgeClient::handleCommand(const Command& c) {
         ESP_LOGI(TAG, "review retake -> %d", r.status);
         break;
       }
-      // save は同じ session_id で UPLOAD_RETRY 回まで送る (edge 側は冪等、protocol.md)。
+      // save の再試行はここ 1 か所で数える: 同じ session_id への save の送信は、通信失敗時の
+      // 自動再送と App の「再試行」を合わせて合計 UPLOAD_RETRY 回まで (edge 側は冪等、protocol.md)。
+      if (strcmp(save_sid_, c.sid) != 0) {
+        copyStr(save_sid_, sizeof(save_sid_), c.sid);
+        save_sends_ = 0;
+      }
+      if (save_sends_ >= config::UPLOAD_RETRY) {
+        ESP_LOGW(TAG, "review save refused: already sent %u times for this session",
+                 static_cast<unsigned>(save_sends_));
+        setError("再試行回数を超えました");
+        edge::PhotoInfo info;
+        info.status = edge::PhotoInfo::Status::Error;
+        copyStr(info.reason, sizeof(info.reason), edge::kSaveRetryExhausted);
+        publishPhoto(c.gen, info);
+        break;
+      }
       Reply r;
-      for (uint8_t attempt = 1; attempt <= config::UPLOAD_RETRY; ++attempt) {
+      while (save_sends_ < config::UPLOAD_RETRY) {
+        ++save_sends_;
         r = request("save", "POST", path, json, nullptr, kMaxJsonBody, false);
-        ESP_LOGI(TAG, "review save attempt %u -> %d", attempt, r.status);
+        ESP_LOGI(TAG, "review save %u/%u -> %d", static_cast<unsigned>(save_sends_),
+                 static_cast<unsigned>(config::UPLOAD_RETRY), r.status);
         if (isSuccess(r.status) || (r.status >= 400 && r.status < 500)) {
           break;  // 成功、または送り直しても変わらない 4xx
         }
-        if (!currentGen(c.gen)) {
+        if (!currentGen(c.gen) || save_sends_ >= config::UPLOAD_RETRY) {
           break;
         }
         vTaskDelay(pdMS_TO_TICKS(kSaveRetryDelayMs));

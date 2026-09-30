@@ -168,6 +168,9 @@ class HttpEdgeClient : public edge::EdgeClient {
   uint32_t poll_started_ms_ = 0;
   uint32_t poll_last_ms_ = 0;
   char poll_sid_[37] = {};
+  // save を送った回数 (session_id ごと、合計 UPLOAD_RETRY 回まで)
+  char save_sid_[37] = {};
+  uint8_t save_sends_ = 0;
   // 送信 fps と往復時間 (logStats で出してリセット)
   uint32_t stats_since_ms_ = 0;
   uint32_t stats_frames_ = 0;

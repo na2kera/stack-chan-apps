@@ -34,7 +34,7 @@ class App {
   enum class ErrorKind : uint8_t {
     Camera,  // カメラ初期化失敗・フレーム停止 → カメラを初期化し直す
     Edge,    // 撮影中に edge との通信が切れた → 繋がっていれば新しいセッション、無ければ DIAG
-    Upload,  // 写真を保存できない → save を送り直す (UPLOAD_RETRY 回まで)
+    Upload,  // 写真を保存できない → save を送り直す (回数の上限は EdgeClient が持つ)
     NoPc,    // 判定なしで撮影した写真は保存できない → Edge と同じ
   };
 
@@ -123,7 +123,6 @@ class App {
   // UPLOADING
   bool uploading_captured_ = false;  // 自動採用 (「撮れたよ」を出す)
   bool uploading_quiet_ = false;     // 再試行なので captured.wav を鳴らさない
-  uint8_t upload_retries_ = 0;
 
   // プレビューの実測
   uint32_t preview_frames_ = 0;

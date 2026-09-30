@@ -37,6 +37,9 @@ struct FrameResult {
   uint16_t latency_ms = 0;  // edge 側の処理時間
 };
 
+// PhotoInfo::reason: save の送信回数 (UPLOAD_RETRY) を使い切ったので送らなかった。
+constexpr const char* kSaveRetryExhausted = "retry_exhausted";
+
 // photo_ready (GET …/photo)。
 struct PhotoInfo {
   enum class Status : uint8_t { Pending, Ready, Error };
@@ -90,7 +93,9 @@ class EdgeClient {
   // 成功なら PSRAM に確保したバッファを返す。呼び出し側が heap_caps_free() する。
   virtual bool fetchCandidate(const app::Session&, uint8_t*& jpeg, size_t& len) = 0;
 
-  // 非同期。save は送信に失敗したら UPLOAD_RETRY 回まで送り直し、成功したら photo をポーリングする。
+  // 非同期。save は通信に失敗したら送り直すが、同じセッションへの save の送信は (この呼び出しを
+  // 何度しても) 合計 UPLOAD_RETRY 回まで。使い切ったら送らずに pollPhotoReady() が
+  // Error(kSaveRetryExhausted) を返す。成功したら photo をポーリングする。
   virtual void reviewDecision(const app::Session&, bool save) = 0;
   // 写真の準備が終わった (ready / error) ら true (1 回だけ)。pending の間は false。
   virtual bool pollPhotoReady(PhotoInfo& out) = 0;

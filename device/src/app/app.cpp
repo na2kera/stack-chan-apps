@@ -188,7 +188,6 @@ void App::startSession(uint32_t now_ms, bool judged) {
   candidate_.clear();
   session_.start(now_ms);
   judged_ = judged;
-  upload_retries_ = 0;
   closer_played_ = false;
   ESP_LOGI(TAG, "session start id=%s (%s)", session_.id, judged ? "edge judge" : "no judge");
   if (judged) {
@@ -231,13 +230,13 @@ void App::failEdge(uint32_t now_ms, const char* what) {
 }
 
 void App::failUpload(uint32_t now_ms, const char* reason) {
-  ESP_LOGW(TAG, "upload failed: %s (retries %u/%u)", reason, upload_retries_,
-           static_cast<unsigned>(config::UPLOAD_RETRY));
-  if (upload_retries_ < config::UPLOAD_RETRY) {
-    snprintf(error_buf_, sizeof(error_buf_), "%s\n(%s)", kUploadFailed, reason);
+  ESP_LOGW(TAG, "upload failed: %s", reason);
+  if (strcmp(reason, edge::kSaveRetryExhausted) == 0) {
+    // 送信回数の上限は EdgeClient が数える (保存の再試行は 1 か所だけ)。
+    snprintf(error_buf_, sizeof(error_buf_), "%s\n再試行回数を超えました。終了して撮り直してね",
+             kUploadFailed);
   } else {
-    snprintf(error_buf_, sizeof(error_buf_), "%s\n(%s) 終了して撮り直してね", kUploadFailed,
-             reason);
+    snprintf(error_buf_, sizeof(error_buf_), "%s\n(%s)", kUploadFailed, reason);
   }
   error_reason_ = error_buf_;
   error_kind_ = ErrorKind::Upload;
@@ -735,12 +734,9 @@ void App::updateError(const hal::Event& ev, uint32_t now_ms) {
         break;
 
       case ErrorKind::Upload:
-        if (upload_retries_ >= config::UPLOAD_RETRY) {
-          ESP_LOGW(TAG, "upload retry limit (%u) reached", static_cast<unsigned>(config::UPLOAD_RETRY));
-          break;  // 画面には「終了して撮り直してね」を出してある
-        }
-        ++upload_retries_;
-        edge_.reviewDecision(session_, true);  // 同じ session_id で save を送り直す (edge は冪等)
+        // 同じ session_id で save を送り直す (edge は冪等)。回数を使い切っていれば EdgeClient が
+        // 送らずに retry_exhausted を返すので、UPLOADING からすぐ ERROR に戻る。
+        edge_.reviewDecision(session_, true);
         uploading_captured_ = false;
         uploading_quiet_ = true;
         enter(State::Uploading, now_ms);
