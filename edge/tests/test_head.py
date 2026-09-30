@@ -128,3 +128,11 @@ def test_closer_vertical_limit(head: HeadConfig) -> None:
     cut_bottom = [face(0.4, 0.7, 0.6, 0.99)]
     cmd, _ = step(cut_bottom, head, sy=head.y_max)
     assert cmd.dy == 0 and cmd.closer
+
+
+def test_interval_not_bypassed_by_clock_going_back(head: HeadConfig) -> None:
+    f = [centered_at(0.75)]
+    cmd, st = step(f, head, now=10_000)
+    assert cmd.dx != 0
+    cmd, _ = step(f, head, now=0, state=st)  # 時計が戻っても間隔制限は外れない
+    assert (cmd.dx, cmd.dy) == (0, 0)

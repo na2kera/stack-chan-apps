@@ -22,7 +22,7 @@ SEARCH_ROUND_TRIPS = 2
 
 @dataclass(frozen=True)
 class HeadState:
-    last_command_ms: int | None = None  # 最後に 0 以外を返したときの capture_ms
+    last_command_ms: int | None = None  # 最後に 0 以外を返したときの edge の単調時計 (ms)
     search_moves: int = 0  # 探索で出した手数
 
 
@@ -87,12 +87,11 @@ def compute_head(
     - 顔あり: 全顔の外接矩形の中心と画像中心の差をデッドバンド・ゲイン・上限で変換。
       片側だけ margin を割っている軸は、その方向への補正を優先しデッドバンドを掛けない。
     - 顔なし: COMPOSE のときだけ search_step で左右交互に探索 (往復 2 回まで)。
-    - 前回の指示から min_interval_ms 未満なら 0。
+    - 前回の指示から min_interval_ms 未満なら 0 (now_ms は edge の単調時計)。
     """
+    # now_ms は edge の単調時計。device の capture_ms は使わない (戻されると制限を外せてしまう)
     interval_ok = (
-        state.last_command_ms is None
-        or now_ms < state.last_command_ms  # 時計が巻き戻った (retake 等) ときは待たない
-        or now_ms - state.last_command_ms >= cfg.min_interval_ms
+        state.last_command_ms is None or now_ms - state.last_command_ms >= cfg.min_interval_ms
     )
 
     if faces:

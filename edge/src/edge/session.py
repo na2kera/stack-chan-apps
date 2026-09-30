@@ -222,6 +222,7 @@ class PhotoboothService:
         store: SessionStore | None = None,
         executor: Executor | None = None,
         wall_clock: Callable[[], datetime] | None = None,
+        clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.cfg = cfg
         self.analyzer = analyzer
@@ -235,6 +236,8 @@ class PhotoboothService:
             else ThreadPoolExecutor(max_workers=2, thread_name_prefix="upload")
         )
         self._wall = wall_clock or (lambda: datetime.now(UTC))
+        # edge の単調時計 (ms)。解析のタイムスタンプと首振りの間隔制限に使う
+        self._clock_ms = clock_ms or (lambda: int(time.monotonic() * 1000))
 
     # ---- hello / session_start ----
 
@@ -296,7 +299,8 @@ class PhotoboothService:
                 code = "image_too_large" if isinstance(exc, ImageTooLargeError) else "bad_image"
                 raise ServiceError(400, code) from exc
 
-            faces = self.analyzer.analyze(rgb, int(time.monotonic() * 1000))
+            now_ms = self._clock_ms()
+            faces = self.analyzer.analyze(rgb, now_ms)
             height, width = rgb.shape[:2]
             cmd, session.head = compute_head(
                 faces,
@@ -305,7 +309,7 @@ class PhotoboothService:
                 f.servo_x,
                 f.servo_y,
                 f.phase,
-                f.capture_ms,
+                now_ms,  # capture_ms はログにだけ使う
                 session.head,
                 self.cfg.head,
                 self.cfg.capture.margin_ratio,
@@ -344,6 +348,7 @@ class PhotoboothService:
                 session_id=f.session_id,
                 frame_id=f.frame_id,
                 phase=f.phase,
+                capture_ms=f.capture_ms,
                 state=session.state.value,
                 face_count=verdict.face_count,
                 target=verdict.target_face_count,

@@ -121,7 +121,7 @@ spec §6.3。`[head]` 設定: `gain_x`, `gain_y`（px → 1/10 度。初期 -0.0
 
 - 顔あり: 全顔の外接矩形の中心と画像中心の差 `(dx, dy)` px。`|dx| <= deadband` なら 0。それ以外は `clamp(dx * gain_x, ±step_max)`。顔の一部が margin を割っているときだけ、その方向へ寄せる補正を優先する。
 - 顔なし（COMPOSE のみ）: `search_step` で左右交互に 1 段ずつ、往復は 2 回まで。CAPTURE 中は探索しない。
-- 前回の指示から `min_interval_ms` 未満なら 0 を返す（device 側でも制限する二重の安全）。
+- 前回の指示から `min_interval_ms` 未満なら 0 を返す（device 側でも制限する二重の安全）。間隔は edge の単調時計で測り、device の `capture_ms` はログにだけ使う（戻されても制限が外れないように）。
 - `servo_x` / `servo_y`（device が送る現在の目標角）が設定の可動域端にあり、まだ寄せたい方向が同じなら `hint="closer"` の材料にする（可動域は `[head]` に device と同じ値を書く）。
 
 ## 7. セッションと gallery

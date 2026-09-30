@@ -510,3 +510,16 @@ def test_image_too_large(client: TestClient, analyzer: FakeAnalyzer, cfg) -> Non
     r = client.post(f"/v1/sessions/{sid}/frames", content=big, headers=h)
     assert r.status_code == 400 and r.json() == {"error": "image_too_large"}
     assert analyzer.calls == 0
+
+
+def test_head_interval_uses_edge_clock_not_capture_ms(
+    client: TestClient, analyzer: FakeAnalyzer, mono
+) -> None:
+    """device の capture_ms が戻っても首振りの間隔制限は edge の時計で守る。"""
+    sid = start(client)
+    off_center = [face(0.7, 0.35, 0.99, 0.65)]  # 32px 幅の画像でも動く量になるよう右端で見切れ
+    analyzer.push(off_center, off_center, off_center)
+    assert send(client, sid, 1, "compose", capture_ms=5000)["servo_dx"] != 0
+    assert send(client, sid, 2, "compose", capture_ms=0)["servo_dx"] == 0
+    mono.t += 0.5
+    assert send(client, sid, 3, "compose", capture_ms=1)["servo_dx"] != 0
