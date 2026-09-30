@@ -21,3 +21,4 @@ gen() {
 
 gen announce "写真を撮るよ！ いい顔をしてね"
 gen captured "撮れたよ"
+gen closer "もう少し寄ってね"

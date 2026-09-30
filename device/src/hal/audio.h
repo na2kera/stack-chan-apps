@@ -19,6 +19,8 @@ class Audio {
   bool playAnnounce();
   // 「撮れたよ」(data/captured.wav)。シャッター音代わり。
   bool playCaptured();
+  // 「もう少し寄ってね」(data/closer.wav)。edge の hint=closer のとき。
+  bool playCloser();
 
   bool isPlaying() const;
   void stop();

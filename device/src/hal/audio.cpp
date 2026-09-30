@@ -10,6 +10,8 @@ extern const uint8_t announce_wav_start[] asm("_binary_data_announce_wav_start")
 extern const uint8_t announce_wav_end[] asm("_binary_data_announce_wav_end");
 extern const uint8_t captured_wav_start[] asm("_binary_data_captured_wav_start");
 extern const uint8_t captured_wav_end[] asm("_binary_data_captured_wav_end");
+extern const uint8_t closer_wav_start[] asm("_binary_data_closer_wav_start");
+extern const uint8_t closer_wav_end[] asm("_binary_data_closer_wav_end");
 
 namespace hal {
 
@@ -53,6 +55,8 @@ bool Audio::play(const uint8_t* start, const uint8_t* end, const char* name) {
 bool Audio::playAnnounce() { return play(announce_wav_start, announce_wav_end, "announce.wav"); }
 
 bool Audio::playCaptured() { return play(captured_wav_start, captured_wav_end, "captured.wav"); }
+
+bool Audio::playCloser() { return play(closer_wav_start, closer_wav_end, "closer.wav"); }
 
 bool Audio::isPlaying() const { return mode_ == Mode::Speaker && M5.Speaker.isPlaying(); }
 
