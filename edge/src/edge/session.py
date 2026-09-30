@@ -555,8 +555,18 @@ class PhotoboothService:
                 raise ServiceError(404, "no_candidate")
             frame_id, rgb, state = chosen.frame_id, chosen.rgb, session.state
             kind = "accepted" if chosen is session.accepted else "best"
-        # rgb は保持後に書き換えないので、エンコードはロックの外で行う
+            generation = session.generation
+        # rgb は保持後に書き換えないので、エンコードはロックの外で行う (フレーム処理を塞がない)。
         jpeg = encode_jpeg(rgb, CANDIDATE_JPEG_QUALITY)
+        # エンコード中に cancel / 再 start / retake / 掃除 (generation が進む) や公開・候補の
+        # 入れ替え (chosen が変わる) があれば、古い候補を返さない
+        with session.lock:
+            if (
+                session.generation != generation
+                or session.state == State.CANCELLED
+                or session.chosen() is not chosen
+            ):
+                raise ServiceError(404, "no_candidate")
         log_event(
             "candidate",
             session_id=session_id,

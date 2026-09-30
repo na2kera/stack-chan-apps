@@ -635,3 +635,34 @@ def test_candidate_404_after_publish(client: TestClient, analyzer: FakeAnalyzer)
     client.post(f"/v1/sessions/{sid}/review", json={"decision": "save"}, headers=AUTH)
     assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).json()["status"] == "ready"
     assert get_candidate(client, sid).status_code == 404  # 公開後は edge にバイト列を残さない
+
+
+@pytest.mark.parametrize("interrupt", ["cancel", "restart", "publish"])
+def test_candidate_404_when_session_changes_during_encoding(
+    client: TestClient, analyzer: FakeAnalyzer, service, monkeypatch, interrupt: str
+) -> None:
+    import edge.session as session_mod
+
+    sid = start(client)
+    analyzer.push([face()])
+    send(client, sid, 1, "compose")
+    send(client, sid, 2, "capture")
+    assert send(client, sid, 3, "capture")["accepted"] is True
+    real = session_mod.encode_jpeg
+    calls: list[int] = []
+
+    def encode_and_interrupt(rgb, quality=90):
+        if quality == session_mod.CANDIDATE_JPEG_QUALITY and not calls:
+            calls.append(1)
+            if interrupt == "cancel":
+                service.cancel(sid)
+            elif interrupt == "restart":
+                service.start_session(sid, 0)
+            else:
+                service.review(sid, "save")  # SyncExecutor なのでその場で公開まで進む
+        return real(rgb, quality)
+
+    monkeypatch.setattr(session_mod, "encode_jpeg", encode_and_interrupt)
+    r = get_candidate(client, sid)
+    assert calls == [1]
+    assert r.status_code == 404 and r.json() == {"error": "no_candidate"}
