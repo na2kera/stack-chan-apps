@@ -559,3 +559,79 @@ def test_declared_size_must_match(
 def test_session_id_must_be_uuid4(client: TestClient, sid: str) -> None:
     r = client.post("/v1/sessions", json={"session_id": sid}, headers=AUTH)
     assert r.status_code == 400 and r.json() == {"error": "invalid_session_id"}
+
+
+def get_candidate(client: TestClient, sid: str):
+    return client.get(f"/v1/sessions/{sid}/candidate", headers=AUTH)
+
+
+def assert_jpeg_candidate(r, width: int = 32, height: int = 24) -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "image/jpeg"
+    assert r.headers["cache-control"] == "no-store"
+    assert r.content[:2] == b"\xff\xd8"
+    with Image.open(BytesIO(r.content)) as im:
+        assert im.format == "JPEG" and im.size == (width, height)  # 受信フレームのサイズのまま
+
+
+def test_candidate_after_accepted(
+    client: TestClient, analyzer: FakeAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    sid = start(client)
+    analyzer.push([face(smile=0.2)], [face()], [face()])
+    send(client, sid, 1, "capture")  # 最良候補 (未採用)
+    send(client, sid, 2, "capture")
+    assert send(client, sid, 3, "capture")["accepted"] is True
+    assert_jpeg_candidate(get_candidate(client, sid))
+    rec = next(r for r in caplog.records if getattr(r, "event", "") == "candidate")
+    assert rec.fields["frame_id"] == 3 and rec.fields["reason"] == "accepted"
+
+
+def test_candidate_after_timeout(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    sid = start(client)
+    analyzer.push([face(smile=0.2)], [])
+    send(client, sid, 1, "capture", fmt="rgb565")
+    send(client, sid, 2, "capture", fmt="rgb565")
+    assert client.post(f"/v1/sessions/{sid}/timeout", headers=AUTH).json()["candidate"]
+    assert_jpeg_candidate(get_candidate(client, sid))
+
+
+def test_candidate_404(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    sid = start(client)
+    r = get_candidate(client, sid)  # フレーム無し
+    assert r.status_code == 404 and r.json() == {"error": "no_candidate"}
+    analyzer.push([])
+    send(client, sid, 1, "capture")
+    client.post(f"/v1/sessions/{sid}/timeout", headers=AUTH)
+    r = get_candidate(client, sid)  # 顔なしで時間切れ
+    assert r.status_code == 404 and r.json() == {"error": "no_candidate"}
+
+    r = get_candidate(client, new_session_id())
+    assert r.status_code == 404 and r.json() == {"error": "unknown_session"}
+
+
+def test_candidate_404_after_cancel(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    sid = start(client)
+    analyzer.push([face(smile=0.2)])
+    send(client, sid, 1, "capture")
+    client.post(f"/v1/sessions/{sid}/timeout", headers=AUTH)
+    assert get_candidate(client, sid).status_code == 200
+    client.post(f"/v1/sessions/{sid}/cancel", headers=AUTH)
+    r = get_candidate(client, sid)
+    assert r.status_code == 404 and r.json() == {"error": "no_candidate"}
+
+
+def test_candidate_404_after_publish(client: TestClient, analyzer: FakeAnalyzer) -> None:
+    sid = start(client)
+    analyzer.push([face()])
+    send(client, sid, 1, "compose")
+    send(client, sid, 2, "capture")
+    assert send(client, sid, 3, "capture")["accepted"] is True
+    client.post(f"/v1/sessions/{sid}/review", json={"decision": "save"}, headers=AUTH)
+    assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).json()["status"] == "ready"
+    assert get_candidate(client, sid).status_code == 404  # 公開後は edge にバイト列を残さない

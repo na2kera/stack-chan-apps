@@ -172,6 +172,13 @@ def create_app(
         status, content = call(service.review, session_id, body.decision)
         return JSONResponse(status_code=status, content=content)
 
+    @v1.get("/sessions/{session_id}/candidate")
+    def candidate(session_id: str) -> Response:
+        jpeg = call(service.candidate_jpeg, session_id)
+        return Response(
+            content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"}
+        )
+
     @v1.get("/sessions/{session_id}/photo")
     def photo(session_id: str) -> dict[str, Any]:
         return call(service.photo, session_id)
