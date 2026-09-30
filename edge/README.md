@@ -64,6 +64,7 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | セクション | キー | 初期値 | 意味 |
 | --- | --- | --- | --- |
 | server | host / port | 0.0.0.0 / 8765 | listen アドレス。LAN 内の PC アドレスを推奨 (0.0.0.0 は開発時のみ) |
+| server | max_sessions | 8 | 同時に保持するセッション数。超えたら一番長くイベントの無いセッションを追い出す (`session_evicted` をログに出す) |
 | auth | device_id / device_key | stackchan-01 / change-me | device の `X-Device-Id` / `X-Device-Key`。`EDGE_DEVICE_KEY` が優先 |
 | capture | max_faces | 4 | 最大人数 (判定と UI の上限)。MediaPipe は max_faces + 1 人まで検出し、超えたら `too_many` で採用しない |
 | capture | countdown_sec | 10 | hello で device に返す撮影秒数 |
@@ -74,6 +75,7 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | capture | stable_frames | 2 | 人数が連続で同じであることを要求するフレーム数 |
 | capture | accept_consecutive | 2 | 条件達成がこの回数連続したフレームを採用 |
 | capture | rgb565_byte_order | little | RGB565 のバイト順 (`little` / `big`)。実機で確認 |
+| capture | max_width / max_height | 1280 / 960 | フレームの上限。宣言サイズ (`X-Width` / `X-Height`) か実サイズが超えたら 400 `image_too_large` |
 | head | gain_x / gain_y | -0.05 / 0.05 | 画像のずれ (px) → サーボ (1/10 度)。符号は実機で校正 |
 | head | deadband_px | 16 | 中心からのずれがこれ以下なら動かさない |
 | head | step_max | 30 | 1 回の指示の上限 (1/10 度) |

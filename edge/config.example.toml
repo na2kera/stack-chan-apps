@@ -1,6 +1,7 @@
 [server]
 host = "0.0.0.0"   # LAN 内の PC アドレスで listen。0.0.0.0 は開発時のみ
 port = 8765
+max_sessions = 8   # 同時に保持するセッション数。超えたら一番長くイベントの無いものを追い出す
 
 [auth]
 device_id = "stackchan-01"
@@ -16,6 +17,8 @@ mouth_smile_min = 0.55
 stable_frames = 2
 accept_consecutive = 2
 rgb565_byte_order = "little"
+max_width = 1280    # これより大きいフレーム (宣言・実サイズとも) は 400 image_too_large
+max_height = 960
 
 [head]
 gain_x = -0.05

@@ -100,3 +100,14 @@ def test_sharpness_sharp_greater_than_blurred() -> None:
     blurred = np.asarray(Image.fromarray(sharp).filter(ImageFilter.GaussianBlur(radius=3)))
     assert sharpness(sharp) > sharpness(blurred) * 5
     assert sharpness(np.zeros((1, 1, 3), dtype=np.uint8)) == 0.0
+
+
+def test_size_limits() -> None:
+    from edge.image import ImageTooLargeError
+
+    with pytest.raises(ImageTooLargeError):
+        decode_frame("rgb565", b"\0" * 8, 5, 1, "little", max_width=4, max_height=4)
+    jpeg = encode_jpeg(np.zeros((8, 6, 3), dtype=np.uint8))
+    with pytest.raises(ImageTooLargeError):
+        decode_frame("jpeg", jpeg, 6, 8, "little", max_width=6, max_height=7)
+    assert decode_frame("jpeg", jpeg, 6, 8, "little", max_width=6, max_height=8).shape == (8, 6, 3)

@@ -141,7 +141,7 @@ def service(
         cfg,
         analyzer,
         gallery,
-        store=SessionStore(clock=mono),
+        store=SessionStore(clock=mono, max_sessions=cfg.server.max_sessions),
         executor=SyncExecutor(),  # type: ignore[arg-type]
         wall_clock=clock,
     )

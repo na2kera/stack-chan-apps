@@ -8,6 +8,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
+import numpy as np
 import pytest
 from conftest import (
     AUTH,
@@ -473,4 +474,39 @@ def test_frame_too_large_declared_or_streamed(client: TestClient, analyzer: Fake
     big = b"\0" * (MAX_FRAME_BYTES + 4096)
     r = client.post(f"/v1/sessions/{sid}/frames", content=big, headers=h)
     assert r.status_code == 413
+    assert analyzer.calls == 0
+
+
+def test_session_count_is_capped(
+    client: TestClient, service, mono, cfg, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    assert cfg.server.max_sessions == 8
+    sids = []
+    for _ in range(cfg.server.max_sessions + 1):
+        sids.append(start(client))
+        mono.t += 1
+    assert len(service.store) == cfg.server.max_sessions
+    # 一番長くイベントの無いセッションが追い出される
+    assert client.get(f"/v1/sessions/{sids[0]}/photo", headers=AUTH).status_code == 404
+    for sid in sids[1:]:
+        assert client.get(f"/v1/sessions/{sid}/photo", headers=AUTH).status_code == 200
+    evicted = [r for r in caplog.records if getattr(r, "event", None) == "session_evicted"]
+    assert len(evicted) == 1 and evicted[0].fields["session_id"] == sids[0]
+
+
+def test_image_too_large(client: TestClient, analyzer: FakeAnalyzer, cfg) -> None:
+    from edge.image import encode_jpeg
+
+    assert (cfg.capture.max_width, cfg.capture.max_height) == (1280, 960)
+    sid = start(client)
+    # 宣言サイズが上限超え (RGB565)
+    h = frame_headers(1, "capture", fmt="rgb565", width=1281, height=10)
+    r = client.post(f"/v1/sessions/{sid}/frames", content=b"\0" * (1281 * 10 * 2), headers=h)
+    assert r.status_code == 400 and r.json() == {"error": "image_too_large"}
+    # JPEG の実サイズが上限超え
+    big = encode_jpeg(np.zeros((970, 16, 3), dtype=np.uint8))
+    h = frame_headers(2, "capture", fmt="jpeg", width=16, height=970)
+    r = client.post(f"/v1/sessions/{sid}/frames", content=big, headers=h)
+    assert r.status_code == 400 and r.json() == {"error": "image_too_large"}
     assert analyzer.calls == 0

@@ -37,7 +37,13 @@ from edge.decision import (
 )
 from edge.gallery import JST, Gallery
 from edge.head import HeadState, compute_head
-from edge.image import ImageDecodeError, decode_frame, encode_jpeg, sharpness
+from edge.image import (
+    ImageDecodeError,
+    ImageTooLargeError,
+    decode_frame,
+    encode_jpeg,
+    sharpness,
+)
 from edge.logging_setup import log_event
 
 PROTOCOL_VERSION = 1
@@ -126,25 +132,41 @@ class Session:
 
 class SessionStore:
     def __init__(
-        self, idle_sec: float = SESSION_IDLE_SEC, clock: Callable[[], float] = time.monotonic
+        self,
+        idle_sec: float = SESSION_IDLE_SEC,
+        clock: Callable[[], float] = time.monotonic,
+        max_sessions: int = 8,
     ) -> None:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
         self._idle_sec = idle_sec
         self._clock = clock
+        self._max_sessions = max_sessions
 
-    def start(self, session_id: str) -> Session:
+    def start(self, session_id: str) -> tuple[Session, list[str]]:
+        """セッションを作る (同じ ID なら初期化する)。戻り値の list は上限超えで追い出した ID。"""
+        evicted: list[Session] = []
         with self._lock:
             now = self._clock()
             session = self._sessions.get(session_id)
+            existed = session is not None
             if session is None:
+                while len(self._sessions) >= self._max_sessions:
+                    oldest = min(self._sessions.values(), key=lambda s: s.touched)
+                    del self._sessions[oldest.session_id]
+                    evicted.append(oldest)
                 session = Session(session_id, now)
                 self._sessions[session_id] = session
-                return session
-            session.touched = now
-        with session.lock:
-            session.reset()
-        return session
+            else:
+                session.touched = now
+        if existed:
+            with session.lock:
+                session.reset()  # 同じ session_id の再送は状態を初期化する
+        for s in evicted:
+            with s.lock:
+                s.discard_frames()
+                s.generation += 1  # 進行中のアップロード結果は捨てて gallery から消す
+        return session, [s.session_id for s in evicted]
 
     def get(self, session_id: str) -> Session:
         # touched の更新も store のロックの中で行い、sweep() との間に隙間を作らない
@@ -204,7 +226,9 @@ class PhotoboothService:
         self.cfg = cfg
         self.analyzer = analyzer
         self.gallery = gallery
-        self.store = store if store is not None else SessionStore()
+        self.store = (
+            store if store is not None else SessionStore(max_sessions=cfg.server.max_sessions)
+        )
         self._executor = (
             executor
             if executor is not None
@@ -233,7 +257,9 @@ class PhotoboothService:
             uuid.UUID(session_id)
         except ValueError as exc:
             raise ServiceError(400, "invalid_session_id") from exc
-        self.store.start(session_id)
+        _, evicted = self.store.start(session_id)
+        for sid in evicted:
+            log_event("session_evicted", session_id=sid, reason="max_sessions")
         log_event("session_start", session_id=session_id, state=State.COMPOSE.value)
         return {"ok": True}
 
@@ -251,7 +277,13 @@ class PhotoboothService:
 
             try:
                 rgb = decode_frame(
-                    f.fmt, f.data, f.width, f.height, self.cfg.capture.rgb565_byte_order
+                    f.fmt,
+                    f.data,
+                    f.width,
+                    f.height,
+                    self.cfg.capture.rgb565_byte_order,
+                    self.cfg.capture.max_width,
+                    self.cfg.capture.max_height,
                 )
             except ImageDecodeError as exc:
                 log_event(
@@ -261,7 +293,8 @@ class PhotoboothService:
                     frame_id=f.frame_id,
                     reason=str(exc),
                 )
-                raise ServiceError(400, "bad_image") from exc
+                code = "image_too_large" if isinstance(exc, ImageTooLargeError) else "bad_image"
+                raise ServiceError(400, code) from exc
 
             faces = self.analyzer.analyze(rgb, int(time.monotonic() * 1000))
             height, width = rgb.shape[:2]

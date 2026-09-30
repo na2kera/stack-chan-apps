@@ -68,6 +68,7 @@
 | 400 | `invalid_session_id` | session_start の `session_id` が UUID でない |
 | 400 | `missing_header:<name>` / `invalid_header:<name>` | frame のヘッダが無い・数値でない・`X-Format` / `X-Phase` が既定値以外 |
 | 400 | `empty_frame` / `bad_image` | frame の本文が空、または宣言した形式・サイズでデコードできない |
+| 400 | `image_too_large` | 宣言サイズ (`X-Width` / `X-Height`) または JPEG の実サイズが edge 設定の `max_width` / `max_height` (初期 1280×960) を超える |
 | 401 | `unauthorized` | `X-Device-Id` / `X-Device-Key` の不一致（本文の検証より先に判定） |
 | 404 | `unknown_session` | 未知の `session_id` |
 | 409 | `nothing_to_save` | 採用フレームも候補も無い、または REVIEW 以外の状態での save |
@@ -81,4 +82,5 @@
 - device は各リクエストに 3 秒のタイムアウトを置く。失敗しても同じフレームを再送しない（次のフレームを送る）。
 - `review` の save だけは同一 `session_id` で最大 3 回まで再試行できる（edge 側は冪等）。
 - edge は 5 分以上イベントの無いセッションを破棄する。
+- edge が保持するセッションは最大 `max_sessions`（初期 8）。超えると一番長くイベントの無いセッションを破棄する（以後そのセッションは 404）。
 - edge に繋がらない間、device は「PC未接続」を出し、自動判定つきの撮影を始めない（タッチによる撮影は固定カメラで続けられる）。

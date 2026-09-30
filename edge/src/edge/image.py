@@ -13,21 +13,41 @@ from PIL import Image, UnidentifiedImageError
 
 ByteOrder = Literal["little", "big"]
 
-MAX_DIM = 2048  # 想定外に大きいフレームを拒否する (device は QVGA、webcam ツールも縮小して送る)
+# 既定の上限 (config の [capture] max_width / max_height)。
+# device は QVGA、webcam ツールも縮小して送る
+DEFAULT_MAX_WIDTH = 1280
+DEFAULT_MAX_HEIGHT = 960
 
 
 class ImageDecodeError(ValueError):
     """フレームのバイト列が宣言と合わない、または壊れている。"""
 
 
-def decode_rgb565(data: bytes, width: int, height: int, byte_order: ByteOrder) -> np.ndarray:
+class ImageTooLargeError(ImageDecodeError):
+    """宣言サイズ、またはデコードしたサイズが上限を超えている。"""
+
+
+def _check_size(width: int, height: int, max_width: int, max_height: int) -> None:
+    if width <= 0 or height <= 0:
+        raise ImageDecodeError(f"invalid size {width}x{height}")
+    if width > max_width or height > max_height:
+        raise ImageTooLargeError(f"{width}x{height} exceeds {max_width}x{max_height}")
+
+
+def decode_rgb565(
+    data: bytes,
+    width: int,
+    height: int,
+    byte_order: ByteOrder,
+    max_width: int = DEFAULT_MAX_WIDTH,
+    max_height: int = DEFAULT_MAX_HEIGHT,
+) -> np.ndarray:
     """RGB565 (1 画素 2 バイト) を RGB888 に展開する。
 
     byte_order="little" は下位バイトが先 (ESP32 のメモリ上の uint16 そのまま)、
     "big" は上位バイトが先 (esp_camera の RGB565 出力はこちらのことが多い)。実機で確認する。
     """
-    if not (0 < width <= MAX_DIM and 0 < height <= MAX_DIM):
-        raise ImageDecodeError(f"invalid size {width}x{height}")
+    _check_size(width, height, max_width, max_height)
     expected = width * height * 2
     if len(data) != expected:
         raise ImageDecodeError(f"rgb565 length {len(data)} != {expected} ({width}x{height})")
@@ -53,13 +73,15 @@ def encode_rgb565(rgb: np.ndarray, byte_order: ByteOrder) -> bytes:
     return px.astype(dtype).tobytes()
 
 
-def decode_jpeg(data: bytes) -> np.ndarray:
+def decode_jpeg(
+    data: bytes, max_width: int = DEFAULT_MAX_WIDTH, max_height: int = DEFAULT_MAX_HEIGHT
+) -> np.ndarray:
     try:
         with Image.open(io.BytesIO(data)) as im:
             if im.format != "JPEG":
                 raise ImageDecodeError(f"not a JPEG ({im.format})")
-            if im.width > MAX_DIM or im.height > MAX_DIM:
-                raise ImageDecodeError(f"jpeg too large {im.width}x{im.height}")
+            # 画素を展開する前にヘッダのサイズで判定する
+            _check_size(im.width, im.height, max_width, max_height)
             # Exif の向きには依存しない (spec §6.1)。受け取った画素のまま扱う
             return np.asarray(im.convert("RGB"), dtype=np.uint8).copy()
     except (UnidentifiedImageError, OSError, SyntaxError) as exc:
@@ -67,12 +89,19 @@ def decode_jpeg(data: bytes) -> np.ndarray:
 
 
 def decode_frame(
-    fmt: str, data: bytes, width: int, height: int, byte_order: ByteOrder
+    fmt: str,
+    data: bytes,
+    width: int,
+    height: int,
+    byte_order: ByteOrder,
+    max_width: int = DEFAULT_MAX_WIDTH,
+    max_height: int = DEFAULT_MAX_HEIGHT,
 ) -> np.ndarray:
+    _check_size(width, height, max_width, max_height)  # 宣言サイズ (X-Width / X-Height)
     if fmt == "rgb565":
-        return decode_rgb565(data, width, height, byte_order)
+        return decode_rgb565(data, width, height, byte_order, max_width, max_height)
     if fmt == "jpeg":
-        return decode_jpeg(data)
+        return decode_jpeg(data, max_width, max_height)
     raise ImageDecodeError(f"unsupported format {fmt!r}")
 
 

@@ -25,6 +25,7 @@ class ConfigError(ValueError):
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8765
+    max_sessions: int = 8
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,8 @@ class CaptureConfig:
     stable_frames: int = 2
     accept_consecutive: int = 2
     rgb565_byte_order: Literal["little", "big"] = "little"
+    max_width: int = 1280
+    max_height: int = 960
 
 
 @dataclass(frozen=True)
@@ -133,6 +136,10 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("[capture] max_faces must be 1..10")
     if c.stable_frames < 1 or c.accept_consecutive < 1:
         raise ConfigError("[capture] stable_frames / accept_consecutive must be >= 1")
+    if c.max_width < 1 or c.max_height < 1:
+        raise ConfigError("[capture] max_width / max_height must be >= 1")
+    if cfg.server.max_sessions < 1:
+        raise ConfigError("[server] max_sessions must be >= 1")
     if not 0 <= c.margin_ratio < 0.5:
         raise ConfigError("[capture] margin_ratio must be 0..0.5")
     h = cfg.head
