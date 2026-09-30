@@ -65,7 +65,7 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | --- | --- | --- | --- |
 | server | host / port | 0.0.0.0 / 8765 | listen アドレス。LAN 内の PC アドレスを推奨 (0.0.0.0 は開発時のみ) |
 | auth | device_id / device_key | stackchan-01 / change-me | device の `X-Device-Id` / `X-Device-Key`。`EDGE_DEVICE_KEY` が優先 |
-| capture | max_faces | 4 | 最大人数 (MediaPipe の num_faces と共通) |
+| capture | max_faces | 4 | 最大人数 (判定と UI の上限)。MediaPipe は max_faces + 1 人まで検出し、超えたら `too_many` で採用しない |
 | capture | countdown_sec | 10 | hello で device に返す撮影秒数 |
 | capture | margin_ratio | 0.08 | 上下左右の安全余白 (画像比) |
 | capture | min_face_width_ratio | 0.08 | これより幅の小さい顔は採用しない |

@@ -104,3 +104,36 @@ def test_app_modules_do_not_import_mediapipe_or_cv2() -> None:
         "bad = {'mediapipe', 'cv2'} & set(sys.modules); assert not bad, bad"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def _fake_mediapipe(recorded: dict) -> SimpleNamespace:
+    class Options:
+        def __init__(self, **kw):
+            recorded.update(kw)
+
+    class BaseOptions:
+        Delegate = SimpleNamespace(CPU="cpu")
+
+        def __init__(self, **kw):
+            recorded["base_options"] = kw
+
+    vision = SimpleNamespace(
+        FaceLandmarkerOptions=Options,
+        RunningMode=SimpleNamespace(VIDEO="video"),
+        FaceLandmarker=SimpleNamespace(create_from_options=lambda opts: object()),
+    )
+    return SimpleNamespace(tasks=SimpleNamespace(vision=vision, BaseOptions=BaseOptions))
+
+
+def test_landmarker_detects_one_more_than_max_faces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """5 人目を観測できないと too_many が出せないので、num_faces は max_faces + 1。"""
+    model = tmp_path / "m.task"
+    model.write_bytes(b"x")
+    recorded: dict = {}
+    monkeypatch.setitem(sys.modules, "mediapipe", _fake_mediapipe(recorded))
+    MediaPipeAnalyzer(model, max_faces=4, warmup=False)
+    assert recorded["num_faces"] == 5
+    assert recorded["output_face_blendshapes"] is True
+    assert recorded["running_mode"] == "video"

@@ -56,6 +56,8 @@ def observation_from_landmarks(landmarks: Any, blendshapes: Any) -> FaceObservat
 class MediaPipeAnalyzer:
     """MediaPipe Face Landmarker (Tasks API, VIDEO モード)。起動時に 1 回だけモデルをロードする。
 
+    max_faces は判定と UI の上限。検出は max_faces + 1 人まで行い、超過を decision.py が拒否する。
+
     VIDEO モードはタイムスタンプが単調増加でないと例外になる。セッションをまたいでも
     増え続けるよう、渡された値が前回以下なら前回 + 1 に繰り上げる。
     MediaPipe のグラフはスレッドセーフではないので、呼び出しはロックで直列化する。
@@ -76,7 +78,8 @@ class MediaPipeAnalyzer:
                 delegate=mp.tasks.BaseOptions.Delegate.CPU,  # PC GPU を必須にしない (spec §3)
             ),
             running_mode=vision.RunningMode.VIDEO,
-            num_faces=max_faces,
+            # 上限 + 1 人まで検出し、上限超え (too_many) を判定できるようにする
+            num_faces=max_faces + 1,
             output_face_blendshapes=True,
         )
         self._landmarker = vision.FaceLandmarker.create_from_options(options)
