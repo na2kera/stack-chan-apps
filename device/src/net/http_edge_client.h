@@ -43,7 +43,7 @@ class HttpEdgeClient : public edge::EdgeClient {
                   edge::Phase phase) override;
   bool pollResult(edge::FrameResult& out) override;
   void sessionTimeout(const app::Session& s) override;
-  bool pollTimeout(bool& has_candidate) override;
+  bool pollTimeout(bool& ok, bool& has_candidate) override;
   bool fetchCandidate(const app::Session& s, uint8_t*& jpeg, size_t& len) override;
   void reviewDecision(const app::Session& s, bool save) override;
   bool pollPhotoReady(edge::PhotoInfo& out) override;
@@ -139,6 +139,7 @@ class HttpEdgeClient : public edge::EdgeClient {
   // accepted を受けた世代ではフレームを送らない (sessionStart / sessionCancel で解除)。
   bool frames_stopped_ = false;
   bool timeout_fresh_ = false;
+  bool timeout_ok_ = false;
   bool timeout_has_candidate_ = false;
   edge::PhotoInfo photo_{};
   bool photo_fresh_ = false;

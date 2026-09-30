@@ -615,10 +615,12 @@ void App::showReview(bool edge_has_candidate) {
 
 void App::updateReview(const hal::Event& ev, uint32_t now_ms) {
   if (review_waiting_) {
+    bool ok = false;
     bool has_candidate = false;
-    if (edge_.pollTimeout(has_candidate)) {
+    if (edge_.pollTimeout(ok, has_candidate)) {
       review_waiting_ = false;
-      if (!has_candidate && !edge_.isOnline()) {
+      if (!ok) {
+        // 通信失敗・edge 再起動後の 404 など。「候補なし」と区別して撮影を止める。
         failEdge(now_ms, kEdgeLost);
         return;
       }

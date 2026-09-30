@@ -249,11 +249,12 @@ void HttpEdgeClient::sessionTimeout(const app::Session& s) {
   enqueue(c);
 }
 
-bool HttpEdgeClient::pollTimeout(bool& has_candidate) {
+bool HttpEdgeClient::pollTimeout(bool& ok, bool& has_candidate) {
   if (task_ == nullptr) return false;
   xSemaphoreTake(mutex_, portMAX_DELAY);
   const bool fresh = timeout_fresh_;
   if (fresh) {
+    ok = timeout_ok_;
     has_candidate = timeout_has_candidate_;
     timeout_fresh_ = false;
   }
@@ -469,10 +470,13 @@ void HttpEdgeClient::handleCommand(const Command& c) {
       snprintf(path, sizeof(path), "/v1/sessions/%s/timeout", c.sid);
       String body;
       const Reply r = request("timeout", "POST", path, nullptr, &body, kMaxJsonBody, true);
+      // 200 で JSON オブジェクトを読めたときだけ Ok。それ以外は「候補なし」ではなく失敗。
+      bool ok = false;
       bool has = false;
       if (r.status == 200) {
         JsonDocument doc;
-        if (deserializeJson(doc, body) == DeserializationError::Ok) {
+        if (deserializeJson(doc, body) == DeserializationError::Ok && doc.is<JsonObject>()) {
+          ok = true;
           JsonVariantConst cand = doc["candidate"];
           has = !cand.isNull();
           if (has) {
@@ -486,9 +490,13 @@ void HttpEdgeClient::handleCommand(const Command& c) {
           setError("timeout: %s", statusText(kErrBadJson));
         }
       }
+      if (!ok) {
+        ESP_LOGW(TAG, "timeout failed: status %d %s", r.status, r.error_code);
+      }
       xSemaphoreTake(mutex_, portMAX_DELAY);
       if (c.gen == generation_) {
         timeout_fresh_ = true;
+        timeout_ok_ = ok;
         timeout_has_candidate_ = has;
       }
       xSemaphoreGive(mutex_);
@@ -917,16 +925,19 @@ HttpEdgeClient::Reply HttpEdgeClient::request(const char* op, const char* method
 }
 
 void HttpEdgeClient::noteResponse(const char* op, const Reply& r) {
-  // 通信失敗・5xx・401 は接続の異常。その他の 4xx は edge には届いている (内容のエラー)。
+  // 通信失敗・5xx・401 は接続の異常 (連続失敗に数える)。
   if (r.status < 0 || r.status >= 500 || r.status == 401) {
     noteFailure(op, r);
     return;
   }
-  noteSuccess();
-  if (!isSuccess(r.status)) {
-    ESP_LOGW(TAG, "%s: http %d %s", op, r.status, r.error_code);
-    setError("%s: HTTP %d %s", op, r.status, r.error_code);
+  // online の時刻を進めるのは 2xx だけ。404 / 409 などは edge は生きているがセッションが
+  // 壊れている応答なので、連続失敗の数は変えず、online の時刻も進めない。
+  if (isSuccess(r.status)) {
+    noteSuccess();
+    return;
   }
+  ESP_LOGW(TAG, "%s: http %d %s", op, r.status, r.error_code);
+  setError("%s: HTTP %d %s", op, r.status, r.error_code);
 }
 
 void HttpEdgeClient::beginHttp(const char* path) {

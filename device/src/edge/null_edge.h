@@ -17,7 +17,7 @@ class NullEdge : public EdgeClient {
   }
   bool pollResult(FrameResult&) override { return false; }
   void sessionTimeout(const app::Session&) override {}
-  bool pollTimeout(bool&) override { return false; }
+  bool pollTimeout(bool&, bool&) override { return false; }
   bool fetchCandidate(const app::Session&, uint8_t*&, size_t&) override { return false; }
   void reviewDecision(const app::Session&, bool) override {}
   bool pollPhotoReady(PhotoInfo&) override { return false; }

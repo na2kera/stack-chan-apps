@@ -81,9 +81,10 @@ class EdgeClient {
 
   // 非同期。結果は pollTimeout()。
   virtual void sessionTimeout(const app::Session&) = 0;
-  // session_timeout の応答が届いたら true (1 回だけ)。通信に失敗したときも true で
-  // has_candidate=false を返す (理由は lastError())。
-  virtual bool pollTimeout(bool& has_candidate) = 0;
+  // session_timeout の結果が出たら true (1 回だけ)。ok=true は 200 で JSON を読めたときだけで、
+  // そのとき has_candidate が候補の有無。ok=false は通信失敗・200 以外・JSON 不正
+  // (edge 再起動後の 404 など。理由は lastError())。「候補なし」とは区別する。
+  virtual bool pollTimeout(bool& ok, bool& has_candidate) = 0;
 
   // 候補 JPEG (GET …/candidate) を同期で取る (最大 EDGE_TIMEOUT_MS 程度)。
   // 成功なら PSRAM に確保したバッファを返す。呼び出し側が heap_caps_free() する。
