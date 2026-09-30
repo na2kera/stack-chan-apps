@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      device: ${{ steps.filter.outputs.device }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            device:
+              - 'device/**'
+              - '.github/workflows/ci.yml'
+
+  device-build:
+    needs: changes
+    if: needs.changes.outputs.device == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            device/.pio
+          key: pio-${{ runner.os }}-${{ hashFiles('device/platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install platformio==6.2.0
+      - name: Build device firmware
+        working-directory: device
+        run: |
+          cp include/config.example.h include/config.h
+          pio run
