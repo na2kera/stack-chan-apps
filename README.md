@@ -31,6 +31,10 @@ cp include/config.example.h include/config.h   # 必要なら値を編集
 pio run                                          # 初回は pioarduino とツールチェーンを取得するので数分かかる
 ```
 
+`include/config.h` が無いまま `pio run` すると、`tools/ensure_config.py` が `config.example.h` をコピーする（既存の `config.h` は上書きしない）。`config.example.h` に項目が増えたときは、手元の `config.h` にも同じ項目を足すこと（足りないとコンパイルエラーになる）。
+
+カメラと内部 I2C の共有が原因と思われる不具合（カメラ初期化後にタッチ・スピーカー・サーボが効かない等）を切り分けるときは、`platformio.ini` の `build_flags` にある `-DPHOTOBOOTH_NO_CAMERA` のコメントを外してビルドする。カメラを初期化せず、プレビュー枠だけを描く。
+
 ボードパッケージとライブラリの版は `device/platformio.ini` で固定している。理由は同ファイルのコメントと [docs/design/step1-device.md](docs/design/step1-device.md) の「技術選定」を参照。
 
 ## 書き込み
