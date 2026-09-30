@@ -79,10 +79,10 @@ device/
 | COMPOSE | プレビュー + 「みんな画面に入ってね」。首を neutral → 左に1ステップ → 右に1ステップ → neutral と動かす（各ステップ `HEAD_STEP_INTERVAL_MS` 間隔）。顔判定が無いので `COMPOSE_TIMEOUT_MS`（5秒）経過で CAPTURE |
 | CAPTURE | 10秒カウント。プレビューに残り秒数を重ねる。首は動かさない。edge が offline なので `accepted` は来ない。時間切れで REVIEW。最後に取得したフレームのコピーを候補として PSRAM に保持する |
 | REVIEW | 候補フレームを表示し「保存する」「撮り直す」。保存 → UPLOADING、撮り直す → ANNOUNCE（新たな10秒） |
-| UPLOADING | 「写真を準備中」を表示し、`captured.wav` を再生。edge 無しなので即 PHOTO_QR（固定 URL）。実装は `EdgeClient::uploadDecision()` の戻りで分岐できる形にしておく |
+| UPLOADING | 「写真を準備中」を表示し、`captured.wav` を再生。edge 無しなので固定 URL を使い、`captured.wav` を言い切ってから（上限 5 秒）PHOTO_QR へ。edge がある場合は `reviewDecision(save)` → `pollPhotoReady()` で URL を受け取る |
 | PHOTO_QR | 「写真を保存」+ QR(`FIXED_PHOTO_URL`) + 削除予定時刻（ステップ1では「--:--」）+「次へ」「撮り直す」 |
 | X_QR | 「保存した写真をXに添付してね」+ QR(`FIXED_SHARE_URL`) +「戻る」「終了」。終了 → IDLE（首を neutral に戻す） |
-| ERROR | 理由 +「再試行」「終了」。カメラ初期化失敗・サーボ初期化失敗で入る |
+| ERROR | 理由 +「再試行」「終了」。カメラ初期化失敗、または COMPOSE / CAPTURE 中に 2 秒フレームが取れないとき（「カメラからフレームを取得できません」）に入る。「再試行」はカメラを deinit → init し直す。サーボ異常は ERROR にせず、IDLE 画面に「首モーター応答なし」を出して固定カメラとして続行する（spec §9） |
 
 ルール（spec §4, §8 から）:
 
@@ -90,6 +90,7 @@ device/
 - 起動指示（タッチ）は IDLE でだけ受ける。それ以外の状態のタッチは各画面のボタンとしてだけ扱う。
 - セリフ再生中はマイクを止める。ステップ1ではマイクを使わないが `audio.speakerOn()` / `audio.micOn()` の切替 API を先に作る（K151 はマイクとスピーカーを同時に使えない）。
 - 首が動いている間（`Motion.isMoving()`）に取得したフレームは候補にしない。
+- サーボ異常の判定: BSP に応答確認 API が無いので、指示から `HEAD_MOVE_TIMEOUT_MS`（3 秒）経っても `isMoving()` が true のままなら応答なしとみなし、以後首を動かさない。
 - 状態遷移ごとに `ESP_LOGI("app", "state %s -> %s (%lu ms)")` を出す。
 - 撮り直しや終了で候補フレームは解放する。
 
@@ -107,6 +108,7 @@ device/
 - 内部単位は BSP と同じ 1/10 度。`config::HEAD_*` で `[X_MIN, X_MAX]`, `[Y_MIN, Y_MAX]` にクランプする。範囲外を要求されたら端で止める。
 - `nudge(dx, dy)`: 1 回の変化量を `±HEAD_STEP_MAX` に制限し、前回指示から `HEAD_STEP_INTERVAL_MS` 未満なら無視する。`moveTo(x, y)` はクランプ後に `Motion.move(x, y, HEAD_SPEED)`。
 - `neutral()` は `moveTo(HEAD_X_NEUTRAL, HEAD_Y_NEUTRAL)`。BSP の `goHome()` は (0, 0) へ動くが、Y=0 が「下向き」なので使わない。
+- 「1 回の指示は最大 3°」（spec §6.3）は顔追従の微調整 `nudge()` に適用する。起動時・終了時の `neutral()` は低速（`HEAD_SPEED`）の 1 指示で戻す（レビュー round 1 で決定）。
 - 起動時に `neutral()` してから待つ。IDLE に戻るときも `neutral()`。
 - 校正値（符号・neutral）は config にだけ書き、コードに固定値を埋め込まない。
 
@@ -129,7 +131,7 @@ device/
 
 - 上 32px: タイトル帯（状態名の日本語）。
 - 下 48px: ボタン帯。ボタンは最大 2 つ、幅は等分、間隔 8px。ラベルは `lgfxJapanGothic_20`。
-- QR 画面: QR を左に 168×168（余白込み、モジュールが 160px 以上になる version にする）、右の 144px 幅に説明文と削除時刻。
+- QR 画面（PHOTO_QR / X_QR）: タイトル帯を持たない。左上 (8, 4) に 184×184 の白地 QR 領域、右欄（x=200、幅 116）の 1 行目に状態名、その下に説明文と削除時刻。QR の version は「本体が 160px 以上、かつ外側に片側 8px 以上の白地が残る最小の version」を自動で選ぶ（固定 URL では v4、本体 165px）。タイトル帯 32 + QR 168 + ボタン帯 48 が 240 に収まらなかったため、レビュー round 1 でこの配置に変更した。
 - IDLE の顔: 黒背景に白の目 2 つ（円）と口（弧）。3 秒ごとに 150ms 目を閉じる。凝らない。
 - プレビュー: 全面にフレームを描き、右上に人数（ステップ1は「--」）と残り秒数を大きく（`lgfxJapanGothic_40` 相当）重ねる。
 - ちらつき防止: 静的画面は状態に入ったとき 1 回だけ描き、変化する部分（残り秒数、目の開閉）だけ `fillRect` で更新する。プレビュー中はフレーム描画後に文字を重ねるので毎フレーム描き直しで良い。
@@ -144,7 +146,7 @@ class EdgeClient {
   virtual ~EdgeClient() = default;
   virtual bool isOnline() = 0;
   virtual void sessionStart(const Session&) = 0;
-  virtual bool sendFrame(const Session&, const camera_fb_t&) = 0;   // 非同期。結果は pollResult
+  virtual bool sendFrame(const Session&, const camera_fb_t&) = 0;   // return までに fb.buf を使い終えること（キューに積むならコピー）。結果は pollResult
   virtual bool pollResult(FrameResult& out) = 0;
   virtual void sessionTimeout(const Session&) = 0;
   virtual void reviewDecision(const Session&, bool save) = 0;
@@ -153,7 +155,7 @@ class EdgeClient {
 };
 ```
 
-`NullEdge` は `isOnline()=false`、他は何もしない。App はこの API だけを使う。イベント名は `docs/spec.md` §8 と一致させる。
+`NullEdge` は `isOnline()=false`、他は何もしない。App はこの API だけを使う。イベント名は `docs/spec.md` §8 と一致させる。呼び出し側は `sendFrame()` の直後にフレームバッファをドライバへ返すので、実装側で非同期送信するときはコピーを取る。
 
 ## 6. main.cpp の初期化順
 
