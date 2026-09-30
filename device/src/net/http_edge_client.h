@@ -84,6 +84,7 @@ class HttpEdgeClient : public edge::EdgeClient {
   };
 
   static void taskEntry(void* arg);
+  void releaseResources();  // begin() 失敗時の後始末
   void taskLoop();
 
   // ---- net タスクだけが呼ぶ ----

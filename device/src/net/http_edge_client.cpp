@@ -97,6 +97,7 @@ bool HttpEdgeClient::begin() {
       slot_[1] == nullptr) {
     ESP_LOGE(TAG, "alloc failed (free PSRAM %u)",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    releaseResources();
     setError("メモリ不足");
     return false;
   }
@@ -109,6 +110,7 @@ bool HttpEdgeClient::begin() {
                               kTaskCore) != pdPASS) {
     task_ = nullptr;
     ESP_LOGE(TAG, "net task create failed");
+    releaseResources();
     setError("通信タスクを起動できません");
     return false;
   }
@@ -116,6 +118,28 @@ bool HttpEdgeClient::begin() {
   ESP_LOGI(TAG, "net task started (core %d, stack %u, port %u)", static_cast<int>(kTaskCore),
            static_cast<unsigned>(kTaskStackBytes), static_cast<unsigned>(config::EDGE_PORT));
   return true;
+}
+
+void HttpEdgeClient::releaseResources() {
+  // begin() の失敗時だけ呼ぶ (net タスクはまだいない)。確保済みのものを解放して null に戻す。
+  for (auto& s : slot_) {
+    if (s != nullptr) {
+      heap_caps_free(s);
+      s = nullptr;
+    }
+  }
+  if (queue_ != nullptr) {
+    vQueueDelete(queue_);
+    queue_ = nullptr;
+  }
+  if (cand_sem_ != nullptr) {
+    vSemaphoreDelete(cand_sem_);
+    cand_sem_ = nullptr;
+  }
+  if (mutex_ != nullptr) {
+    vSemaphoreDelete(mutex_);
+    mutex_ = nullptr;  // 以後 setError() / lastError() は mutex なしで last_error_ を使う
+  }
 }
 
 bool HttpEdgeClient::isOnline() {
