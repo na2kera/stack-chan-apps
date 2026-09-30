@@ -35,9 +35,16 @@ constexpr int HEAD_Y_NEUTRAL  =  450;
 constexpr int HEAD_STEP_MAX   =   30;  // 1回の指示で動く最大角 (3°)
 constexpr uint32_t HEAD_STEP_INTERVAL_MS = 500; // 指示の最小間隔
 constexpr int HEAD_SPEED      =  200;  // BSP speed 0..1000、低め
+// 指示後この時間を過ぎても isMoving() が true のままならサーボ応答なしとみなし、
+// 首を止めて固定カメラとして続行する (spec §9 サーボエラー)
+constexpr uint32_t HEAD_MOVE_TIMEOUT_MS = 3000;
 // 画像上のずれ → サーボ角の係数。符号は実機で確認して直す。
 constexpr float HEAD_GAIN_X   = -0.05f; // image_dx(px) * gain = servo_dx(1/10度)
 constexpr float HEAD_GAIN_Y   =  0.05f;
+
+// ---- 画面 ----
+constexpr uint32_t IDLE_BLINK_INTERVAL_MS = 3000; // IDLE の顔が瞬きする間隔
+constexpr uint32_t IDLE_BLINK_MS          = 150;  // 目を閉じている時間
 
 // ---- 音声 ----
 constexpr uint8_t SPEAKER_VOLUME = 160;  // 0..255
