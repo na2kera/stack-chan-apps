@@ -29,7 +29,8 @@ photobooth/
 ```
 
 - フォーク側の作業ブランチは `photobooth`（`main` は upstream 追従用に触らない）。photobooth リポジトリはサブモジュールのコミットを指す。
-- フォークに入れる変更は「`main/apps/app_photobooth/` の追加」「`main.cpp` の `installApp` 1 行」「OTA 自動更新チェックの無効化」「`main/CMakeLists.txt` への音声ファイル埋め込み」に限定し、upstream の追従を楽にする。
+- フォークに入れる変更は「`main/apps/app_photobooth/` の追加」「`main.cpp` の `installApp` 1 行と `apps/apps.h` の include 1 行」「OTA 自動更新の無効化（`patches/xiaozhi-esp32.patch`）」「`main/CMakeLists.txt` への音声ファイル埋め込み」「`firmware/README.md` への追記」に限定し、upstream の追従を楽にする。
+- `installApp` は `AppSetup` の後（最後）に足す。各アプリの `requestWarmReboot(index)` が install 順の番号を直書きしているため、途中に挟むと再起動後に別のアプリへスクロールしてしまう。
 
 ## 3. 技術選定（固定値）
 
@@ -41,7 +42,7 @@ photobooth/
 | UI | LVGL 9.4 + smooth_ui_toolkit lvgl_cpp | 純正と同じ。`CONFIG_LV_USE_QRCODE=y` 済みなので QR は `lv_qrcode` |
 | カメラ | `hal_bridge::board_get_camera()`（esp_video / V4L2 の `StackChanCamera`）。`StreamCaptures()` → `GetFrameData/Size/Width/Height/Format()` | 純正のビデオ通話（`hal_ws_avatar.cpp`）と同じ経路 |
 | 画像 | JPEG 化は `jpg/image_to_jpeg.h`、JPEG → LVGL は `utils/jpeg_to_image/jpeg_decoder.h` | 純正に同梱 |
-| 音声出力 | `Board::GetInstance().GetAudioCodec()` の `EnableOutput(true)` + `OutputData(std::vector<int16_t>&)`（`main/hal/audio.cpp` のマイクテストと同じ使い方） | 純正のコーデック経路。サンプルレートはコーデック初期化値に合わせて WAV を変換する |
+| 音声出力 | `Board::GetInstance().GetAudioCodec()` の `EnableOutput(true)` + `OutputData(std::vector<int16_t>&)`（`main/hal/audio.cpp` のマイクテストと同じ使い方） | 純正のコーデック経路。出力は `AUDIO_OUTPUT_SAMPLE_RATE` = 24 kHz / mono（`main/hal/board/config.h`）なので WAV は 24 kHz / mono / 16-bit |
 | 首 | `GetStackChan()` に付いている `motion::Motion`（`moveWithSpeed(yaw, pitch, speed)`、単位 1/10 度、`goHome`、`stop`、`setTorqueEnabled`） | 純正と同じ。可動域・neutral・ステップ上限の考え方は `docs/design/step1-device.md` §5 head を踏襲 |
 | 頭部タッチ | `GetHAL().onHeadPetGesture`（Press / Release / Swipe） | |
 | 画面タッチ | LVGL のボタン／全画面クリック領域 | |
@@ -58,16 +59,21 @@ app_photobooth/
 │   ├── flow.h/.cpp         # 状態機械。docs/design/step1-device.md §4 と同じ遷移。HW は下の hw/ 経由
 │   └── session.h           # UUID v4 / frame_id / 単調時計 (device/src/app/session.h を移植)
 ├── hw/
-│   ├── camera.h/.cpp       # board_get_camera() ラッパ。start/stop、grab()、フレームの保持 (候補 1 枚)
+│   ├── camera.h/.cpp       # board_get_camera() ラッパ。取り込みタスク (StreamCaptures → RGB565)、最新フレームの受け渡し、候補 1 枚の保持
 │   ├── head.h/.cpp         # Motion ラッパ。クランプ・ステップ制限・neutral・応答監視 (device/src/hal/head.cpp を移植)
 │   ├── audio.h/.cpp        # 埋め込み WAV → PCM 再生 (別タスクで OutputData)、isPlaying()
 │   └── input.h/.cpp        # 頭部タッチ信号と LVGL のタップを Event に正規化
 ├── view/
 │   ├── view.h/.cpp         # 画面ごとの LVGL 構築・更新。LvglLockGuard 必須
-│   └── widgets.h/.cpp      # タイトル帯、ボタン帯 (最大 2)、QR、プレビュー画像、カウント表示
+│   ├── widgets.h/.cpp      # タイトル帯、ボタン帯 (最大 2)、QR、プレビュー画像、カウント表示
+│   └── strings.h           # 画面の文言をここに集約 (日本語フォントはこの文字だけから作る)
 ├── assets/
-│   ├── icon_photobooth.c   # ランチャー用アイコン (LVGL C 配列。assets パーティションは触らない)
+│   ├── pb_assets.h         # フォント・アイコン・WAV シンボルの宣言
+│   ├── icon_photobooth.c   # ランチャー用アイコン (188x150 RGB565A8 の LVGL C 配列。assets パーティションは触らない)
+│   ├── pb_font_jp_20.c     # 日本語 20px (ASCII + strings.h の文字)。lv_font_conv で生成
+│   ├── pb_font_num_48.c    # 残り秒数用の数字 48px
 │   └── voice/*.wav         # announce / captured / closer (CMake の EMBED_FILES で埋め込み)
+├── tools/                  # make_voice.sh / gen_font.sh / make_icon.py (素材の再生成)
 └── config.h                # 可動域・neutral・秒数・固定 URL など (device/include/config.example.h の該当分)
 ```
 
@@ -79,14 +85,15 @@ app_photobooth/
 
 | 項目 | 独立ファーム版 | 純正ファーム内アプリ版 |
 | --- | --- | --- |
-| IDLE | 自前の顔を描く | ランチャーの顔が IDLE 相当。アプリを開いた直後の画面は「待機」（文言は spec §4 の IDLE と同じ）。「終了」で `close()` してランチャーへ |
+| IDLE | 自前の顔を描く | ランチャーの顔が IDLE 相当。アプリを開いた直後の画面は「待機」（文言は spec §4 の IDLE と同じ。ボタン帯に「終了」）。待機の「終了」と X_QR の「終了」で `close()` してランチャーへ（X_QR の「終了」は IDLE に戻らない） |
 | 画面描画 | M5GFX 直描き | LVGL。プレビューは `lv_image` に RGB565 バッファを張り替える（または `lv_canvas`）。カウントなどは上に重ねたラベルを更新 |
-| 日本語フォント | lgfxJapanGothic | 純正同梱フォント（`main/assets/fonts`、xiaozhi-fonts の puhui 系）。**かなが出るかを最初に確認**し、出なければ `lv_font_conv` で必要文字だけの LVGL フォントを `assets/` に追加 |
-| 音声 | M5.Speaker.playWav | コーデックの PCM 出力。WAV はビルド時に埋め込み、再生タスクで 20ms ずつ `OutputData` |
+| 日本語フォント | lgfxJapanGothic | 確認結果: 純正が組み込む `font_puhui_basic_20_4` には一部のかな・漢字（あ と ね 撮 写 など 40 字）が無い。同じ PuHuiTi 系の `puhui-common.ttf`（xiaozhi-fonts 同梱）から `view/strings.h` の文字 + ASCII だけを `lv_font_conv` で切り出した `pb_font_jp_20`（20px / 4bpp）と、残り秒数用の `pb_font_num_48` を `assets/` に置く。漢字の字形は中国語系 |
+| 音声 | M5.Speaker.playWav | コーデックの PCM 出力（24 kHz / mono）。WAV はビルド時に埋め込み、再生タスクで 20ms ずつ `OutputData`。音量は純正の設定値（SETUP）に従う |
 | マイク | M5.Mic | 今回は使わない。AI エージェント（xiaozhi）がコーデック入力を持つのはそのアプリを開いている間だけなので競合しない |
-| 首 | StackChan-BSP Motion | 純正 Motion（API はほぼ同じ）。アプリを閉じるときに neutral に戻し、純正の挙動（トルク自動解放）を乱さない |
-| 設定 | config.h（.gitignore） | 同じ。鍵・Wi-Fi はステップ2 で。純正の Wi-Fi 設定（NVS）を使えるので SSID/パスワードの直書きは不要になる見込み |
-| 自動更新 | なし | `application.cc` の起動時更新チェックを無効化（フォークのパッチ）。README に明記 |
+| 首 | StackChan-BSP Motion | 純正 Motion（API はほぼ同じ。ただし `update()` を呼ばないと動かないので、アプリが毎 tick 呼ぶ）。純正は止まるとトルクを自動で抜くので、撮影中だけ自動解放を止めて姿勢を保つ。アプリを閉じるときに neutral に戻す指示を出し、自動解放を純正の既定（有効）に戻す |
+| 設定 | config.h（.gitignore） | `app_photobooth/config.h` をコミット（ステップ1は秘密が無い）。鍵はステップ2 で別ファイルに分けて .gitignore する。純正の Wi-Fi 設定（NVS）を使えるので SSID/パスワードの直書きは不要になる見込み |
+| 自動更新 | なし | `application.cc` の `CheckNewVersion()` で新版があっても書き換えないようにした（`patches/xiaozhi-esp32.patch`）。版チェック自体は活性化と MQTT/WebSocket 設定の取得を兼ねるので残す。SETUP からの手動更新は使える（実行すると純正に戻る）。`firmware/README.md` に明記 |
+| カメラ | esp_camera を自前で init / deinit | カメラは純正のボード初期化が持つ。プレビューは取り込みタスクで `StreamCaptures()` → YUYV を esp_imgfx で RGB565 に変換。ERROR の「再試行」はドライバを作り直さず取り込みタスクだけ作り直す |
 | 復旧 | M5Burner | 同じ（純正ファーム＝このビルドの元なので、純正に戻すのも M5Burner） |
 
 ## 6. 実装順（このステップの中）
@@ -111,6 +118,6 @@ app_photobooth/
 
 ## 8. 実機で確認して反映する値
 
-- コーデックの出力サンプルレート（WAV の変換先）。
+- ~~コーデックの出力サンプルレート（WAV の変換先）。~~ → コードで確定: 24 kHz（`main/hal/board/config.h`）。実機では音の高さ・速さが正しいかだけ確認する。
 - プレビューの色（`SetSwapBytes`）と向き（`SetHMirror` / `SetVFlip`）。
 - 首の neutral（純正の home と同じで良いか）。

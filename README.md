@@ -7,13 +7,35 @@ M5Stack StackChan K151 に「写真撮りたい」と話しかける（または
 ## 構成
 
 ```
-device/    K151 に書き込む独立ファーム (PlatformIO, Arduino-ESP32)
+stackchan/ 純正ファームのフォーク (git submodule, na2kera/StackChan の photobooth ブランチ)
+           firmware/main/apps/app_photobooth/ が撮影アプリ
+device/    旧・独立ファーム (PlatformIO, Arduino-ESP32)。凍結: 参照用に残し、以後更新しない
 edge/      PC で動かす Python サービス (音声認識・顔判定・首振り計算)   ※ステップ2以降
 gallery/   公開 HTTPS の写真配布サービス                                 ※ステップ4以降
 docs/      仕様・設計・通信契約
 ```
 
-現在の進捗: ステップ1（device 単体でフローを通す）を実装中。
+現在の進捗: 純正ファーム内アプリ版のステップ1（[docs/design/fw-app-step1.md](docs/design/fw-app-step1.md)）を実装中。
+
+## ビルドと書き込み（純正ファーム内アプリ版）
+
+撮影アプリは純正ファームのフォーク `stackchan/firmware`（ESP-IDF プロジェクト）に入っている。純正のホーム画面・AI エージェント・既存アプリはそのまま残り、ランチャーに「Photobooth」が増える。詳細（フォークの差分、自動更新を止めた範囲、素材の作り直し）は [stackchan/firmware/README.md](stackchan/firmware/README.md) の「Photobooth fork」を参照。
+
+```console
+git submodule update --init stackchan
+cd stackchan/firmware
+python3 ./fetch_repos.py                 # 初回のみ。依存 (mooncake, xiaozhi-esp32 など) を取得してパッチを当てる
+source ~/esp/esp-idf-v5.5.4/export.sh    # ESP-IDF v5.5.4
+idf.py set-target esp32s3                # 初回のみ
+idf.py build
+idf.py -p /dev/cu.usbmodemXXXX flash monitor
+```
+
+- 書き込みでつながらないときは、下の「書き込み」と同じくダウンロードモード（リセット長押し 2 秒 → 緑 LED）にする。
+- 純正に戻すときは、下の「復旧」と同じく M5Burner で純正ファームを書き込む（手順は変わらない）。
+- このビルドは AI エージェント起動時の自動更新をしない。SETUP から手動で更新すると純正に置き換わり、撮影アプリは消える。
+
+以下の「準備」〜「音声素材の差し替え」は凍結した旧・独立ファーム（`device/`）の手順。
 
 ## 準備
 
