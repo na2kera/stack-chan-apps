@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stackchan-gallery",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "stackchan-gallery"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "vars": {
+    "TTL_MINUTES": "60",
+    "SHARE_TEXT": "スタックチャンに撮ってもらいました！ #スタックチャン #StackChan",
+    "PUBLIC_BASE_URL": ""
+  }
+}
