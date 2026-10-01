@@ -4,7 +4,7 @@ PC で動かす Python サービス。device (K151) から受け取ったフレ�
 採用判定 (spec §6.2)・首振り量 (§6.3)・時間切れ候補 (§6.4)・レビューとアップロードを行う。
 通信契約は [docs/protocol.md](../docs/protocol.md)、設計は [docs/design/step2a-edge.md](../docs/design/step2a-edge.md)。
 
-ステップ2a では gallery はモック (edge 自身が写真ページを配る) で、音声起動はまだ無い。
+gallery は LAN 内確認用モックと、公開 HTTPS の Cloudflare Workers 版を切り替えられる。音声起動はまだ無い。
 
 ## 準備
 
@@ -19,7 +19,7 @@ cp config.example.toml config.toml      # 必要なら値を編集。config.toml
 ```
 
 `config.toml` が無いと `config.example.toml` を読んで警告を出す。
-鍵は `config.toml` の `[auth] device_key` か環境変数 `EDGE_DEVICE_KEY` (こちらが優先) に置く。
+device の鍵は `config.toml` の `[auth] device_key` か環境変数 `EDGE_DEVICE_KEY` (こちらが優先) に置く。HTTP gallery の共有鍵は環境変数 `GALLERY_KEY` にだけ置く。
 
 ## 起動
 
@@ -83,9 +83,10 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | head | search_step | 20 | 顔が無いときの探索幅 (COMPOSE のみ、往復 2 回まで) |
 | head | x_min / x_max / y_min / y_max | -250 / 250 / 250 / 650 | 可動域。device の config.h と同じ値にする |
 | analysis | model_path | models/face_landmarker.task | config ファイルのあるディレクトリからの相対パス |
-| gallery | mode | mock | ステップ2a は mock のみ |
+| gallery | mode | mock | LAN 内モックは `mock`、公開 gallery は `http` |
 | gallery | ttl_minutes | 60 | 写真の保存期間。期限後は 410 |
 | gallery | public_base_url | "" | 写真 URL の先頭。空なら `http://<listen host>:<port>` (0.0.0.0 のときは推定した LAN アドレス) |
+| gallery | url | "" | `http` モードの公開 gallery URL。共有鍵は環境変数 `GALLERY_KEY` から読む |
 | share | text | スタックチャンに撮ってもらいました！ #スタックチャン #StackChan | X 投稿画面に入れる本文 |
 
 ## モック gallery について
@@ -93,6 +94,8 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 `gallery.mode = "mock"` では edge 自身が `/mock/p/<token>` (写真ページ)、`/mock/p/<token>.jpg`、`/mock/share/x` (X 投稿画面へ 302) を配る。
 **モックは LAN 内の動作確認用で、QR でスマホに配る用途には使わない** (spec 仮定 B: PC の LAN アドレスを QR に入れない)。
 写真はメモリにだけ置き、edge を止めると消える。公開 HTTPS の配布はステップ4の `gallery/` で行う。
+
+公開 gallery を使う場合は `mode = "http"` と `url = "https://stackchan-gallery.<account>.workers.dev"` を設定し、Worker と同じ共有鍵を `GALLERY_KEY` に設定する。HTTP 接続エラーと 5xx は短い待機を挟んで最大 3 回試行する。
 
 ## テスト
 

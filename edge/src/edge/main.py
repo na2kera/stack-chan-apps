@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from edge.analysis import MediaPipeAnalyzer, ModelNotFoundError
     from edge.api import create_app
-    from edge.gallery import MockGallery
+    from edge.gallery import HttpGallery, MockGallery
     from edge.session import PhotoboothService
 
     try:
@@ -72,13 +72,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     log_event("model_loaded", max_faces=cfg.capture.max_faces)
 
-    gallery = MockGallery(
-        base_url=mock_base_url(cfg),
-        ttl=timedelta(minutes=cfg.gallery.ttl_minutes),
-        share_text=cfg.share.text,
-    )
+    mock_gallery = None
+    if cfg.gallery.mode == "mock":
+        mock_gallery = MockGallery(
+            base_url=mock_base_url(cfg),
+            ttl=timedelta(minutes=cfg.gallery.ttl_minutes),
+            share_text=cfg.share.text,
+        )
+        gallery = mock_gallery
+    else:
+        gallery = HttpGallery(base_url=cfg.gallery.url, key=cfg.gallery.key, timeout=5.0)
     service = PhotoboothService(cfg, analyzer, gallery)
-    app = create_app(service, cfg.auth, gallery)
+    app = create_app(service, cfg.auth, mock_gallery)
     log_event(
         "server_start",
         host=cfg.server.host,
