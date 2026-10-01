@@ -26,3 +26,11 @@ gallery/config.toml
 # runtime data
 gallery/storage/
 edge/tmp/
+
+# firmware (純正ファーム) の取得物・生成物
+firmware/components/
+firmware/xiaozhi-esp32/
+firmware/managed_components/
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old

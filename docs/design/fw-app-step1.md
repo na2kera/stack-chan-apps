@@ -20,16 +20,17 @@
 ## 2. リポジトリ構成
 
 ```
-photobooth/
-├── stackchan/            # git submodule → github.com/na2kera/StackChan (m5stack/StackChan のフォーク)
-│   └── firmware/         # ESP-IDF プロジェクト。ここに main/apps/app_photobooth/ を足す
+stack-chan-apps/
+├── firmware/             # m5stack/StackChan の firmware/ を git subtree (squash) で取り込んだ ESP-IDF プロジェクト。
+│   └── main/apps/app_photobooth/   # ここに足す (将来 app_roulette も)
 ├── device/               # 旧・独立ファーム (参照用、更新しない)
 ├── edge/                 # 変更なし
 └── docs/
 ```
 
-- フォーク側の作業ブランチは `photobooth`（`main` は upstream 追従用に触らない）。photobooth リポジトリはサブモジュールのコミットを指す。
-- フォークに入れる変更は「`main/apps/app_photobooth/` の追加」「`main.cpp` の `installApp` 1 行と `apps/apps.h` の include 1 行」「OTA 自動更新の無効化（`patches/xiaozhi-esp32.patch`）」「`main/CMakeLists.txt` への音声ファイル埋め込み」「`firmware/README.md` への追記」に限定し、upstream の追従を楽にする。
+- 2026-10-01 にサブモジュール方式から subtree 方式に変更した（1 リポジトリで完結させ、PR にアプリのコードが載るようにするため）。
+- upstream の追従: `git clone https://github.com/m5stack/StackChan /tmp/sc && git -C /tmp/sc subtree split --prefix=firmware -b firmware-only` で firmware/ だけの履歴を作り、`git subtree pull --prefix=firmware /tmp/sc firmware-only --squash` で取り込む。衝突するのは下記の数ファイルだけ。
+- 純正に入れる変更は「`main/apps/app_photobooth/` の追加」「`main.cpp` の `installApp` 1 行と `apps/apps.h` の include 1 行」「OTA 自動更新の無効化（`patches/xiaozhi-esp32.patch`）」「`main/CMakeLists.txt` への音声ファイル埋め込み」「`firmware/README.md` への追記」に限定し、upstream の追従を楽にする。
 - `installApp` は `AppSetup` の後（最後）に足す。各アプリの `requestWarmReboot(index)` が install 順の番号を直書きしているため、途中に挟むと再起動後に別のアプリへスクロールしてしまう。
 
 ## 3. 技術選定（固定値）
@@ -49,7 +50,7 @@ photobooth/
 | 時計 | `GetHAL().millis()` | |
 | ログ | `mclog::tagInfo/Warn/Error` | 純正と同じ |
 
-## 4. アプリ構成（`stackchan/firmware/main/apps/app_photobooth/`）
+## 4. アプリ構成（`firmware/main/apps/app_photobooth/`）
 
 ```
 app_photobooth/

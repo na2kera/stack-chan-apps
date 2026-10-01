@@ -1,14 +1,16 @@
-# stack-chan-photobooth
+# stack-chan-apps
 
-M5Stack StackChan K151 に「写真撮りたい」と話しかける（またはタッチする）と、首を動かして全員を画角に収め、全員が目を開けて笑った瞬間の写真を撮り、ダウンロード用 QR と X 投稿用 QR を表示する自動撮影アプリ。
+M5Stack StackChan K151 の純正ファームに追加する自作アプリ集。1 つ目は自動撮影アプリ (photobooth)。
+
+photobooth は、StackChan に「写真撮りたい」と話しかける（またはタッチする）と、首を動かして全員を画角に収め、全員が目を開けて笑った瞬間の写真を撮り、ダウンロード用 QR と X 投稿用 QR を表示する自動撮影アプリ。
 
 仕様は [docs/spec.md](docs/spec.md)、設計は [docs/design/](docs/design/) を参照。
 
 ## 構成
 
 ```
-stackchan/ 純正ファームのフォーク (git submodule, na2kera/StackChan の photobooth ブランチ)
-           firmware/main/apps/app_photobooth/ が撮影アプリ
+firmware/  純正ファーム (m5stack/StackChan の firmware/ を git subtree で取り込み) + 自作アプリ
+           main/apps/app_photobooth/ が撮影アプリ。ルーレット (app_roulette) も今後ここに追加
 device/    旧・独立ファーム (PlatformIO, Arduino-ESP32)。凍結: 参照用に残し、以後更新しない
 edge/      PC で動かす Python サービス (音声認識・顔判定・首振り計算)   ※ステップ2以降
 gallery/   公開 HTTPS の写真配布サービス                                 ※ステップ4以降
@@ -19,11 +21,10 @@ docs/      仕様・設計・通信契約
 
 ## ビルドと書き込み（純正ファーム内アプリ版）
 
-撮影アプリは純正ファームのフォーク `stackchan/firmware`（ESP-IDF プロジェクト）に入っている。純正のホーム画面・AI エージェント・既存アプリはそのまま残り、ランチャーに「Photobooth」が増える。詳細（フォークの差分、自動更新を止めた範囲、素材の作り直し）は [stackchan/firmware/README.md](stackchan/firmware/README.md) の「Photobooth fork」を参照。
+撮影アプリは `firmware/`（純正ファームの ESP-IDF プロジェクト）に入っている。純正のホーム画面・AI エージェント・既存アプリはそのまま残り、ランチャーに「Photobooth」が増える。詳細（フォークの差分、自動更新を止めた範囲、素材の作り直し）は [firmware/README.md](firmware/README.md) の「Photobooth fork」を参照。
 
 ```console
-git submodule update --init stackchan
-cd stackchan/firmware
+cd firmware
 python3 ./fetch_repos.py                 # 初回のみ。依存 (mooncake, xiaozhi-esp32 など) を取得してパッチを当てる
 source ~/esp/esp-idf-v5.5.4/export.sh    # ESP-IDF v5.5.4
 idf.py set-target esp32s3                # 初回のみ
@@ -33,6 +34,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 
 - 書き込みでつながらないときは、下の「書き込み」と同じくダウンロードモード（リセット長押し 2 秒 → 緑 LED）にする。
 - 純正に戻すときは、下の「復旧」と同じく M5Burner で純正ファームを書き込む（手順は変わらない）。
+- 純正 (upstream) の更新を取り込むときは `git subtree pull --prefix=firmware <upstream firmware-only ブランチ> --squash`（詳細は docs/design/fw-app-step1.md §2）。
 - このビルドは AI エージェント起動時の自動更新をしない。SETUP から手動で更新すると純正に置き換わり、撮影アプリは消える。
 
 以下の「準備」〜「音声素材の差し替え」は凍結した旧・独立ファーム（`device/`）の手順。
