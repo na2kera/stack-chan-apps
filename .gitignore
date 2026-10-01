@@ -34,3 +34,6 @@ firmware/managed_components/
 firmware/build/
 firmware/sdkconfig
 firmware/sdkconfig.old
+
+# MediaPipe モデル (edge/tools/download_model.py で取得)
+edge/models/
