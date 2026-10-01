@@ -44,4 +44,20 @@ describe("expiry", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('"deleted":1'));
     log.mockRestore();
   });
+
+  it("scheduled() は別の写真を指す session 索引を消さない", async () => {
+    await putExpired();
+    await env.PHOTOS.put(`sessions/${SESSION}`, "BBBBBBBBBBBBBBBBBBBBBB");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const ctx = createExecutionContext();
+    await worker.scheduled!(
+      { scheduledTime: Date.now(), cron: "*/5 * * * *", noRetry: () => undefined },
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    log.mockRestore();
+    expect(await env.PHOTOS.get(`photos/${TOKEN}.jpg`)).toBeNull();
+    expect(await (await env.PHOTOS.get(`sessions/${SESSION}`))!.text()).toBe("BBBBBBBBBBBBBBBBBBBBBB");
+  });
 });

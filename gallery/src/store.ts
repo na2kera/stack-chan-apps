@@ -2,7 +2,7 @@ import { createToken } from "./token";
 
 export interface Env {
   PHOTOS: R2Bucket;
-  GALLERY_KEY: string;
+  GALLERY_KEY?: string;
   TTL_MINUTES: string;
   SHARE_TEXT: string;
   PUBLIC_BASE_URL: string;
@@ -64,8 +64,11 @@ export async function putPhoto(
   ttlMinutes: number,
   now = new Date(),
 ): Promise<PutPhotoResult> {
-  const existing = await findBySession(bucket, sessionId, now);
-  if (existing !== null) return { ...existing, created: false };
+  const index = await bucket.get(sessionKey(sessionId));
+  if (index !== null) {
+    const current = await getPhoto(bucket, await index.text());
+    if (current !== null && !isExpired(current.metadata, now)) return { ...current, created: false };
+  }
 
   const token = createToken();
   const metadata: PhotoMetadata = {
@@ -73,11 +76,20 @@ export async function putPhoto(
     captured_at: capturedAt,
     expires_at: new Date(now.getTime() + ttlMinutes * 60_000).toISOString(),
   };
+  // 写真 → 索引の順に書く。索引は条件付き (無ければ作る / 読んだ版のままなら置き換える) にして、
+  // 同じ session_id の並行アップロードで勝つのは 1 件だけにする。負けた側は自分の写真を消して勝者を返す。
   await bucket.put(photoKey(token), jpeg, {
     customMetadata: { ...metadata },
     httpMetadata: { contentType: "image/jpeg" },
   });
-  await bucket.put(sessionKey(sessionId), token);
+  const onlyIf = index === null ? new Headers({ "If-None-Match": "*" }) : { etagMatches: index.etag };
+  const written = await bucket.put(sessionKey(sessionId), token, { onlyIf });
+  if (written === null) {
+    await bucket.delete(photoKey(token));
+    const winner = await findBySession(bucket, sessionId, now);
+    if (winner === null) throw new Error("session index conflict");
+    return { ...winner, created: false };
+  }
   const object = await bucket.get(photoKey(token));
   if (object === null) throw new Error("photo disappeared after upload");
   return { token, object, metadata, created: true };
@@ -100,7 +112,13 @@ export async function deleteExpired(bucket: R2Bucket, now = new Date()): Promise
       const metadata = object.customMetadata as unknown as Partial<PhotoMetadata>;
       if (metadata.expires_at && Date.parse(metadata.expires_at) <= now.getTime()) {
         photoKeys.push(object.key);
-        if (metadata.session_id) sessionKeys.push(sessionKey(metadata.session_id));
+        // 索引がこの写真を指しているときだけ消す (同じ session の新しい写真の索引を巻き込まない)。
+        if (metadata.session_id) {
+          const key = sessionKey(metadata.session_id);
+          const index = await bucket.get(key);
+          const token = object.key.slice("photos/".length, -".jpg".length);
+          if (index !== null && (await index.text()) === token) sessionKeys.push(key);
+        }
       }
     }
     await deleteInChunks(bucket, photoKeys);

@@ -42,6 +42,36 @@ describe("POST /internal/photos", () => {
     expect(second.body).toEqual(first.body);
   });
 
+  it("同じ session_id の並行アップロードでも写真は 1 件だけ", async () => {
+    const session = "223e4567-e89b-42d3-a456-426614174000";
+    const send = () =>
+      SELF.fetch("https://gallery.test/internal/photos", { method: "POST", headers: headers(KEY, session), body: JPEG });
+    const responses = await Promise.all([send(), send(), send()]);
+    const bodies = await Promise.all(responses.map((r) => r.json<Record<string, string>>()));
+    expect(responses.map((r) => r.status).sort()).toEqual([200, 200, 201]);
+    expect(new Set(bodies.map((b) => b.token)).size).toBe(1);
+    const listed = await env.PHOTOS.list({ prefix: "photos/", include: ["customMetadata"] });
+    expect(listed.objects.filter((o) => o.customMetadata?.session_id === session)).toHaveLength(1);
+  });
+
+  it("空の鍵ヘッダを 401 にする", async () => {
+    const response = await SELF.fetch("https://gallery.test/internal/photos", {
+      method: "POST",
+      headers: headers(""),
+      body: JPEG,
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("EOI で終わらない JPEG を 415 にする", async () => {
+    const response = await SELF.fetch("https://gallery.test/internal/photos", {
+      method: "POST",
+      headers: headers(KEY, "323e4567-e89b-42d3-a456-426614174000"),
+      body: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00]),
+    });
+    expect(response.status).toBe(415);
+  });
+
   it("鍵違いを 401 にする", async () => {
     const response = await SELF.fetch("https://gallery.test/internal/photos", {
       method: "POST",
@@ -99,6 +129,13 @@ describe("GET /p/<token>", () => {
     expect(image.status).toBe(200);
     expect(new Uint8Array(await image.arrayBuffer())).toEqual(JPEG);
     expect(image.headers.get("Content-Disposition")).toMatch(/^attachment; filename="stackchan-/);
+  });
+
+  it("GET 以外にも共通ヘッダを付けて 405 にする", async () => {
+    const response = await SELF.fetch("https://gallery.test/p/AAAAAAAAAAAAAAAAAAAAAA", { method: "HEAD" });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
   });
 
   it("未知の token を 404 にする", async () => {

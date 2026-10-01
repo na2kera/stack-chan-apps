@@ -154,8 +154,13 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("[gallery] mode must be 'mock' or 'http'")
     if cfg.gallery.ttl_minutes <= 0:
         raise ConfigError("[gallery] ttl_minutes must be > 0")
-    if cfg.gallery.mode == "http" and not cfg.gallery.url:
-        raise ConfigError("[gallery] url is required in http mode")
+    if cfg.gallery.mode == "http":
+        if not cfg.gallery.url:
+            raise ConfigError("[gallery] url is required in http mode")
+        # 共有鍵と写真を平文で送らない (spec §7.1)。手元の wrangler dev だけ http を許す。
+        local = cfg.gallery.url.startswith(("http://localhost", "http://127.0.0.1"))
+        if not cfg.gallery.url.startswith("https://") and not local:
+            raise ConfigError("[gallery] url must be https:// in http mode")
 
 
 def parse_config(raw: dict[str, Any], base_dir: Path = EDGE_DIR) -> Config:

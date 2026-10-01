@@ -84,10 +84,10 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | head | x_min / x_max / y_min / y_max | -250 / 250 / 250 / 650 | 可動域。device の config.h と同じ値にする |
 | analysis | model_path | models/face_landmarker.task | config ファイルのあるディレクトリからの相対パス |
 | gallery | mode | mock | LAN 内モックは `mock`、公開 gallery は `http` |
-| gallery | ttl_minutes | 60 | 写真の保存期間。期限後は 410 |
+| gallery | ttl_minutes | 60 | 写真の保存期間。期限後は 410。**mock のみ** (`http` モードは `gallery/wrangler.jsonc` の `TTL_MINUTES`) |
 | gallery | public_base_url | "" | 写真 URL の先頭。空なら `http://<listen host>:<port>` (0.0.0.0 のときは推定した LAN アドレス) |
-| gallery | url | "" | `http` モードの公開 gallery URL。共有鍵は環境変数 `GALLERY_KEY` から読む |
-| share | text | スタックチャンに撮ってもらいました！ #スタックチャン #StackChan | X 投稿画面に入れる本文 |
+| gallery | url | "" | `http` モードの公開 gallery URL (`https://` 必須)。共有鍵は環境変数 `GALLERY_KEY` から読む |
+| share | text | スタックチャンに撮ってもらいました！ #スタックチャン #StackChan | X 投稿画面に入れる本文。**mock のみ** (`http` モードは `gallery/wrangler.jsonc` の `SHARE_TEXT`) |
 
 ## モック gallery について
 

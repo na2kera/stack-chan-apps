@@ -92,3 +92,24 @@ def test_key_never_appears_in_logs(caplog: pytest.LogCaptureFixture) -> None:
     _gallery(handler).delete("full-photo-token")
     assert KEY not in caplog.text
     assert "full-photo-token" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("url", "ok"),
+    [
+        ("https://gallery.example", True),
+        ("http://localhost:8787", True),
+        ("http://127.0.0.1:8787", True),
+        ("http://gallery.example", False),
+        ("", False),
+    ],
+)
+def test_http_mode_requires_https_url(url: str, ok: bool) -> None:
+    from edge.config import ConfigError, parse_config
+
+    raw = {"gallery": {"mode": "http", "url": url}}
+    if ok:
+        assert parse_config(raw).gallery.url == url
+    else:
+        with pytest.raises(ConfigError):
+            parse_config(raw)

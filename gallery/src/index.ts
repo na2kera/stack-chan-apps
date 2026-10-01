@@ -12,6 +12,7 @@ import {
 import { isToken } from "./token";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const MAX_TTL_MINUTES = 7 * 24 * 60;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PHOTO_HEADERS = {
   "Cache-Control": "no-store",
@@ -38,7 +39,16 @@ function expiresAtJst(iso: string): string {
 }
 
 function publicOrigin(request: Request, env: Env): string {
-  return (env.PUBLIC_BASE_URL || new URL(request.url).origin).replace(/\/$/, "");
+  // QR に入れる URL は HTTPS だけ (spec §7.1)。PUBLIC_BASE_URL が https でなければ使わない。
+  const configured = env.PUBLIC_BASE_URL?.startsWith("https://") ? env.PUBLIC_BASE_URL : "";
+  return (configured || new URL(request.url).origin).replace(/\/$/, "");
+}
+
+// SOI (FF D8 FF) で始まり EOI (FF D9) で終わること。途中で切れたデータを公開しない。
+function looksLikeJpeg(data: ArrayBuffer): boolean {
+  const b = new Uint8Array(data);
+  const n = b.length;
+  return n >= 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff && b[n - 2] === 0xff && b[n - 1] === 0xd9;
 }
 
 function uploadBody(request: Request, env: Env, token: string, metadata: PhotoMetadata) {
@@ -71,11 +81,11 @@ async function upload(request: Request, env: Env): Promise<Response> {
   }
   const jpeg = await request.arrayBuffer();
   if (jpeg.byteLength > MAX_PHOTO_BYTES) return json({ error: "photo_too_large" }, 413);
-  if (jpeg.byteLength < 2 || new Uint8Array(jpeg, 0, 2)[0] !== 0xff || new Uint8Array(jpeg, 0, 2)[1] !== 0xd8) {
-    return json({ error: "invalid_jpeg" }, 415);
-  }
+  if (!looksLikeJpeg(jpeg)) return json({ error: "invalid_jpeg" }, 415);
   const ttlMinutes = Number(env.TTL_MINUTES);
-  if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) throw new Error("invalid TTL_MINUTES");
+  if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0 || ttlMinutes > MAX_TTL_MINUTES) {
+    throw new Error("invalid TTL_MINUTES");
+  }
   const photo = await putPhoto(env.PHOTOS, sessionId, jpeg, capturedAt, ttlMinutes);
   return json(uploadBody(request, env, photo.token, photo.metadata), photo.created ? 201 : 200);
 }
@@ -105,6 +115,9 @@ async function fetchHandler(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/internal/photos") return upload(request, env);
   if (request.method === "GET" && url.pathname === "/share/x") {
     return Response.redirect(shareIntentUrl(env.SHARE_TEXT), 302);
+  }
+  if (url.pathname.startsWith("/p/") && request.method !== "GET") {
+    return new Response("Method Not Allowed", { status: 405, headers: { ...PHOTO_HEADERS, Allow: "GET" } });
   }
   if (request.method === "GET" && url.pathname.startsWith("/p/")) {
     const part = url.pathname.slice(3);
