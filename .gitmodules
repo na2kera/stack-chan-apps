@@ -1,3 +1,0 @@
-[submodule "firmware"]
-	path = stackchan
-	url = git@github.com:na2kera/StackChan.git
