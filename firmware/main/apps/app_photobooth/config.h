@@ -3,19 +3,40 @@
  *
  * SPDX-License-Identifier: MIT
  */
-// app_photobooth の設定 (device/include/config.example.h のうちステップ1で使う分)。
+// app_photobooth の設定 (device/include/config.example.h の移植)。
 //
-// 鍵・Wi-Fi などの秘密はまだ無いのでコミットしてよい。ステップ2 (edge 接続) で秘密を足すときは
-// 別ファイルに分けて .gitignore する。値の意味と初期値の根拠は docs/spec.md §2, §6.3, §9。
+// このファイルに秘密は無いのでコミットしてよい。edge の接続先と共有鍵は config_local.h
+// (.gitignore 済み。見本は config_local.example.h) に分けてある。
+// 値の意味と初期値の根拠は docs/spec.md §2, §6.3, §9。
 #pragma once
 
 #include <cstdint>
+
+// edge (PC) と通信するビルドか (docs/design/fw-app-step2.md §2)。
+//   - config_local.h があれば有効。無ければ無効 (ステップ1 と同じ単体動作・固定 URL)。
+//   - `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` なら config_local.h があっても無効
+//     (戻すときは `idf.py -DPHOTOBOOTH_NO_EDGE=0 build`。CMake のキャッシュに残るため)。
+// config_local.h 自体は net/edge_config.h だけが include する (鍵を通信層の外に見せない)。
+#if !defined(PHOTOBOOTH_NO_EDGE) && __has_include("config_local.h")
+#define PHOTOBOOTH_EDGE_ENABLED 1
+#else
+#define PHOTOBOOTH_EDGE_ENABLED 0
+#endif
 
 namespace photobooth::config {
 
 // ---- 撮影フロー ----
 constexpr uint32_t COUNTDOWN_SEC      = 10;    // CAPTURE の長さ (spec §2 カウント)
 constexpr uint32_t COMPOSE_TIMEOUT_MS = 5000;  // COMPOSE の上限 (spec §4)
+constexpr uint32_t COMPOSE_STABLE_MS  = 1000;  // 顔が枠内に連続して入っている必要時間 (edge の判定つきのとき)
+constexpr uint8_t MAX_FACES           = 4;     // 「4人までだよ」の人数 (edge の max_faces と揃える)
+
+// ---- edge (PC) との通信 (docs/protocol.md「タイムアウトと再試行」) ----
+constexpr bool EDGE_ENABLED          = PHOTOBOOTH_EDGE_ENABLED != 0;
+constexpr uint32_t EDGE_TIMEOUT_MS   = 3000;   // 1 リクエストのタイムアウト
+constexpr uint32_t HELLO_INTERVAL_MS = 5000;   // 通信が無いときの hello の間隔 (接続確認)
+constexpr uint32_t UPLOAD_WAIT_MS    = 15000;  // UPLOADING で写真の準備を待つ上限
+constexpr uint8_t UPLOAD_RETRY       = 3;      // 保存 (review save) の送信回数の上限 (session ごと)
 
 // ---- 首振り (単位: 純正 Motion と同じ 1/10 度。250 = 25°) ----
 // X = yaw (左右)、Y = pitch (純正の home = 0 が下向き、値が大きいほど上向き)。
@@ -42,7 +63,7 @@ constexpr uint32_t HEAD_SETTLE_MS = 150;
 constexpr bool CAMERA_HMIRROR = false;
 constexpr bool CAMERA_VFLIP   = false;
 
-// ---- 配布 URL (ステップ1では固定 QR の内容。ステップ4で gallery の応答に置き換わる) ----
+// ---- 配布 URL (edge 無効ビルドのときだけ使う固定 QR の内容。有効なら edge の photo_ready の URL) ----
 constexpr const char* FIXED_PHOTO_URL = "https://example.com/p/fixed-demo-token";
 constexpr const char* FIXED_SHARE_URL = "https://example.com/share/x";
 

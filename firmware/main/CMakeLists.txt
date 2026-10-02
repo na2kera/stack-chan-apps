@@ -331,6 +331,12 @@ target_compile_definitions(${COMPONENT_LIB}
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
                     )
 
+# app_photobooth: `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` で edge 通信なし (config_local.h があっても使わない)。
+# CMake のキャッシュに残るので、戻すときは `idf.py -DPHOTOBOOTH_NO_EDGE=0 build`。
+if(PHOTOBOOTH_NO_EDGE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_NO_EDGE=1)
+endif()
+
 # Add generation rules
 add_custom_command(
     OUTPUT ${LANG_HEADER}
