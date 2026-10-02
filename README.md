@@ -17,7 +17,7 @@ gallery/   公開 HTTPS の写真配布サービス                             
 docs/      仕様・設計・通信契約
 ```
 
-現在の進捗: 純正ファーム内アプリ版のステップ1（[docs/design/fw-app-step1.md](docs/design/fw-app-step1.md)）を実装中。
+現在の進捗: 純正ファーム内アプリ版のステップ2（[docs/design/fw-app-step2.md](docs/design/fw-app-step2.md)。app_photobooth を Wi-Fi で edge に繋ぎ、顔判定・首振り・本物の QR を動かす）を実装中。ステップ1（[docs/design/fw-app-step1.md](docs/design/fw-app-step1.md)）は実装済み。
 
 ## ビルドと書き込み（純正ファーム内アプリ版）
 
@@ -36,6 +36,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 - 純正に戻すときは、下の「復旧」と同じく M5Burner で純正ファームを書き込む（手順は変わらない）。
 - 純正 (upstream) の更新を取り込むときは `git subtree pull --prefix=firmware <upstream firmware-only ブランチ> --squash`（詳細は docs/design/fw-app-step1.md §2）。
 - このビルドは AI エージェント起動時の自動更新をしない。SETUP から手動で更新すると純正に置き換わり、撮影アプリは消える。
+- edge (PC) と繋ぐには `firmware/main/apps/app_photobooth/config_local.example.h` を `config_local.h` にコピーして接続先と共有鍵を書き、edge を `--host 0.0.0.0` で起動する（手順は [firmware/README.md](firmware/README.md) の「edge (PC) と繋ぐ」）。`config_local.h` が無い、または `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` なら edge なしの単体動作（固定 URL の QR）になる。
 
 以下の「準備」〜「音声素材の差し替え」は凍結した旧・独立ファーム（`device/`）の手順。
 
