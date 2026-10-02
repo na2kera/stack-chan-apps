@@ -293,7 +293,6 @@ struct EdgeWorker {
     esp_http_client_handle_t http = nullptr;
     bool http_open                = false;  // TCP 接続を持っている (と思っている)
     bool sending_cancel           = false;  // 終了要求の後でも送ってよいリクエスト (session_cancel) の最中
-    bool frame_headers_set        = false;
     uint32_t request_started_ms   = 0;      // 今のリクエストの期限の起点 (exchange の中だけで使う)
     char json[kMaxJsonBody + 1]   = {};     // 直近の応答本文
     size_t json_len               = 0;
@@ -1303,8 +1302,7 @@ bool EdgeWorker::ensureHttp()
     // (esp_http_client がヘッダを出すのは DEBUG レベルだけで、純正の既定では出ない)。
     esp_http_client_set_header(http, "X-Device-Id", local::kDeviceId);
     esp_http_client_set_header(http, "X-Device-Key", local::kSharedKey);
-    http_open         = false;
-    frame_headers_set = false;
+    http_open = false;
     return true;
 }
 
@@ -1380,21 +1378,21 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
         r.status = kErrInternal;
         return r;
     }
+    // esp_http_client はヘッダをハンドルに覚え続ける。リクエストごとのヘッダ (Content-Type と frame 専用の
+    // X-Frame-Id など) は毎回いったん全部消してから付け直し、frame のヘッダが後続の hello / timeout /
+    // review / photo / candidate に漏れないようにする。残すのは認証ヘッダ (ensureHttp) と、
+    // クライアントが毎回設定し直す Host / User-Agent / Content-Length だけ。
+    esp_http_client_delete_header(http, "Content-Type");
+    for (const char* name : kFrameHeaders) {
+        esp_http_client_delete_header(http, name);
+    }
     if (rq.content_type != nullptr) {
         esp_http_client_set_header(http, "Content-Type", rq.content_type);
-    } else {
-        esp_http_client_delete_header(http, "Content-Type");
     }
     if (rq.frame_headers != nullptr) {
         for (size_t i = 0; i < sizeof(kFrameHeaders) / sizeof(kFrameHeaders[0]); ++i) {
             esp_http_client_set_header(http, rq.frame_headers[i].name, rq.frame_headers[i].value);
         }
-        frame_headers_set = true;
-    } else if (frame_headers_set) {
-        for (const char* name : kFrameHeaders) {
-            esp_http_client_delete_header(http, name);
-        }
-        frame_headers_set = false;
     }
 
     // 接続 (まだなら) + リクエスト行とヘッダの送信。Content-Length は esp_http_client が付ける。
