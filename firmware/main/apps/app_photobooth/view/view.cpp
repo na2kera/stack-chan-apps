@@ -351,13 +351,19 @@ bool View::showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len)
     // デコード用の領域を確保する前に、ヘッダだけ読んで大きさを確かめる。プレビューと同じ大きさ
     // (320x240) 以外は出さない (edge は受信フレームと同じ大きさの JPEG を返す、protocol.md)。
     JpegInfo info;
-    if (!readJpegInfo(jpeg, len, info)) {
+    const JpegStatus st = readJpegInfo(jpeg, len, info);
+    if (st == JpegStatus::Invalid) {
         mclog::tagWarn(kTag, "review jpeg ({} bytes) has no valid header", len);
         return false;
     }
-    if (info.width != kScreenW || info.height != kScreenH || info.progressive) {
-        mclog::tagWarn(kTag, "review jpeg {}x{}{} is not the expected {}x{} baseline image", info.width, info.height,
-                       info.progressive ? " (progressive)" : "", kScreenW, kScreenH);
+    if (st == JpegStatus::Unsupported) {
+        mclog::tagWarn(kTag, "review jpeg {}x{} is not baseline (SOF 0x{:02X}, {} bit, {} components)", info.width,
+                       info.height, static_cast<unsigned>(info.sof), info.precision, info.components);
+        return false;
+    }
+    if (info.width != kScreenW || info.height != kScreenH) {
+        mclog::tagWarn(kTag, "review jpeg {}x{} is not the expected {}x{}", info.width, info.height, kScreenW,
+                       kScreenH);
         return false;
     }
     // デコード (数十 ms) は LVGL のロックの外でする。出力は RGB565 LE (プレビューと同じ並び)。

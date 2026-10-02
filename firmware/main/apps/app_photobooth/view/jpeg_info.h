@@ -14,14 +14,21 @@
 namespace photobooth::view {
 
 struct JpegInfo {
-    int width       = 0;
-    int height      = 0;
-    bool progressive = false;  // SOF2 (プログレッシブ)
+    int width      = 0;
+    int height     = 0;
+    int precision  = 0;  // サンプルのビット数
+    int components = 0;  // 成分数
+    uint8_t sof    = 0;  // 見つかった SOF マーカー (0xC0 = ベースライン、0xC1 = 拡張、0xC2 = プログレッシブ …)
 };
 
-// SOI から SOF0 / SOF1 / SOF2 までセグメントをたどって幅・高さを読む。
-// 途中でデータが足りない・長さが不正・SOF の前にスキャン (SOS) や EOI が来たら false。
-// すべての読み出しで len を超えないことを確かめる。
-bool readJpegInfo(const uint8_t* data, size_t len, JpegInfo& out);
+enum class JpegStatus : uint8_t {
+    Ok,           // ベースライン (SOF0)、8 ビット、1 または 3 成分
+    Invalid,      // JPEG として読めない (データ不足・長さ不正・SOF の前に SOS / EOI など)
+    Unsupported,  // 読めたがベースラインではない (SOF1 / SOF2 など、8 ビット以外、成分数が 1・3 以外)
+};
+
+// SOI から最初の SOF までセグメントをたどって、幅・高さ・精度・成分数を読む。
+// すべての読み出しで len を超えないことを確かめる。Unsupported のときも out は埋まる (ログ用)。
+JpegStatus readJpegInfo(const uint8_t* data, size_t len, JpegInfo& out);
 
 }  // namespace photobooth::view
