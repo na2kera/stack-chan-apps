@@ -25,11 +25,11 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
-#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <hal/hal.h>
 #include <mooncake_log.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -101,7 +101,7 @@ constexpr const char* kFrameHeaders[] = {
 
 uint32_t nowMs()
 {
-    return static_cast<uint32_t>(esp_timer_get_time() / 1000);  // GetHAL().millis() と同じ時計
+    return GetHAL().millis();  // Flow・カメラ層と同じ時計 (画面には触らない HAL 呼び出し)
 }
 
 void copyStr(char* dst, size_t n, const char* src)
@@ -164,132 +164,6 @@ bool isSuccess(int status)
 bool wifiUp()
 {
     return Network::status() == Network::Status::Connected;
-}
-
-}  // namespace
-
-namespace {
-
-// リクエストの絶対期限の番人。プロセスの寿命を持つ 1 個だけ (worker には持たせない)。
-//
-// 期限 (EDGE_TIMEOUT_MS) に達したら、esp_timer のコールバックがソケットを shutdown() して、
-// esp_http_client の中でブロックしている select / recv / send を失敗で戻らせる
-// (open() や fetch_headers() は内部でループし、1 回の送受信ごとにタイムアウトを数え直すので、
-//  少しずつバイトを送ってくる相手だと armDeadline() だけでは期限を越えて待ち続ける)。
-//
-// 寿命: esp_timer_stop() / esp_timer_delete() は、もう dispatch されたコールバックの終了を待たない。
-// 番人を worker に持たせると、コールバックが走る (mutex を取ろうとする) 最中に worker が解放されうる。
-// そこで mutex・状態・タイマーをすべて静的な寿命にし、タイマーは最初の 1 回だけ作って削除しない。
-// コールバックは worker を一切参照しない。
-//
-// ロックの順序: m は末端のロック。持ったまま EdgeWorker::mutex (mailbox) を取らない。
-// fd を閉じる前に必ず watchdogDisarm() するので、コールバックが再利用された fd を shutdown することは無い。
-struct RequestWatchdog {
-    std::mutex m;
-    int fd              = -1;     // 今のリクエストが使っているソケット (接続前は -1)
-    bool armed          = false;  // リクエストの最中
-    bool fired          = false;  // 期限に達した (disarm が受け取る)
-    uint32_t owner      = 0;      // 掛けたリクエストの合い札 (0 = 無し)
-    uint32_t last_token = 0;
-    int64_t deadline_us = 0;      // esp_timer_get_time() での期限。これより前に走ったコールバックは無視する
-    esp_timer_handle_t timer = nullptr;  // 最初の arm で作り、削除しない
-};
-
-RequestWatchdog& watchdog()
-{
-    static RequestWatchdog w;
-    return w;
-}
-
-void watchdogCallback(void*)
-{
-    // esp_timer タスク。close() はしない (fd の持ち主は esp_http_client)。shutdown() だけして、
-    // net タスクのブロックしている送受信をエラーで戻らせる。lwIP のソケットは別タスクから呼んでよい。
-    auto& w = watchdog();
-    std::lock_guard<std::mutex> lock(w.m);
-    if (!w.armed || esp_timer_get_time() < w.deadline_us) {
-        return;  // もう終わっている、または前のリクエストの分が遅れて走った
-    }
-    w.fired = true;
-    if (w.fd >= 0) {
-        shutdown(w.fd, SHUT_RDWR);
-    }
-}
-
-// 絶対期限で番人を掛ける。戻り値は合い札 (0 = 掛けられなかった。そのリクエストは armDeadline() だけで縛る)。
-uint32_t watchdogArm(int fd)
-{
-    auto& w = watchdog();
-    // タイマーの start / stop も m の中でする (止める側と掛ける側が別の worker でも順序が入れ替わらない)。
-    // どちらも待たない呼び出しで、コールバックの終了は待たない。
-    std::lock_guard<std::mutex> lock(w.m);
-    uint32_t token;
-    {
-        if (w.timer == nullptr) {
-            esp_timer_create_args_t args = {};
-            args.callback                = &watchdogCallback;
-            args.arg                     = nullptr;
-            args.dispatch_method         = ESP_TIMER_TASK;
-            args.name                    = "pb_edge_dl";
-            if (esp_timer_create(&args, &w.timer) != ESP_OK) {
-                w.timer = nullptr;
-                mclog::tagError(kTag, "watchdog timer create failed");
-                return 0;
-            }
-        }
-        if (w.armed) {
-            // 生きている worker は 1 つだけ (切り離し中は begin() を断る) なので、ここには来ないはず。
-            mclog::tagError(kTag, "watchdog already armed by another request (owner {}); not arming", w.owner);
-            return 0;
-        }
-        if (++w.last_token == 0) ++w.last_token;
-        token         = w.last_token;
-        w.owner       = token;
-        w.armed       = true;
-        w.fired       = false;
-        w.fd          = fd;
-        w.deadline_us = esp_timer_get_time() + static_cast<int64_t>(config::EDGE_TIMEOUT_MS) * 1000;
-    }
-    esp_timer_stop(w.timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
-    esp_timer_start_once(w.timer, static_cast<uint64_t>(config::EDGE_TIMEOUT_MS) * 1000);
-    return token;
-}
-
-// 接続できた後に fd を教える。接続の間に期限が来ていたら false (コールバックは fd を知らず何も
-// できなかったので、呼び出し側がタイムアウトとして打ち切る)。
-bool watchdogSetFd(uint32_t token, int fd)
-{
-    if (token == 0) {
-        return true;  // 番人なし
-    }
-    auto& w = watchdog();
-    std::lock_guard<std::mutex> lock(w.m);
-    if (w.owner != token || !w.armed) {
-        return true;
-    }
-    if (w.fired) {
-        return false;
-    }
-    w.fd = fd;
-    return true;
-}
-
-// 番人を止める。自分 (token) が掛けたものだけ止めるので、切り離されて残った worker が、新しい worker の
-// リクエストの番人を止めることは無い。戻り値は、このリクエストで期限に達していたか。
-bool watchdogDisarm(uint32_t token)
-{
-    auto& w = watchdog();
-    std::lock_guard<std::mutex> lock(w.m);
-    if (token == 0 || w.owner != token) {
-        return false;
-    }
-    const bool fired = w.fired;
-    w.armed          = false;
-    w.fired          = false;
-    w.fd             = -1;
-    w.owner          = 0;
-    esp_timer_stop(w.timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
-    return fired;
 }
 
 }  // namespace
@@ -365,9 +239,6 @@ struct EdgeWorker {
     Reply exchange(const Request& rq);
     bool ensureHttp();
     bool armDeadline();
-    Reply exchangeGuarded(const Request& rq);
-    void armWatchdog();
-    void disarmWatchdog();
     enum class ReadStep : uint8_t { Data, End, Again, Error };
     ReadStep readSome(char* dst, size_t want, size_t& n, int& err);
     int readBody(char* dst, size_t cap, size_t& got);
@@ -422,8 +293,6 @@ struct EdgeWorker {
     bool http_open                = false;  // TCP 接続を持っている (と思っている)
     bool sending_cancel           = false;  // 終了要求の後でも送ってよいリクエスト (session_cancel) の最中
     uint32_t request_started_ms   = 0;      // 今のリクエストの期限の起点 (exchange の中だけで使う)
-    uint32_t wd_token             = 0;      // 期限の番人 (RequestWatchdog) を掛けたときの合い札。0 = 掛けていない
-    bool wd_request_fired         = false;  // 今のリクエストで番人が発火した
     char json[kMaxJsonBody + 1]   = {};     // 直近の応答本文
     size_t json_len               = 0;
     int send_idx                  = 1;
@@ -838,7 +707,7 @@ EdgeWorker::~EdgeWorker()
 {
     // 最後の shared_ptr を手放した側 (通常は end()、切り離し時は net タスク) で走る。
     // この時点で net タスクは run() を抜けているので、http はもう使われていない。
-    dropHttp();  // 先に disarmWatchdog() する
+    dropHttp();
     for (auto& s : slot) {
         if (s != nullptr) {
             heap_caps_free(s);
@@ -1438,7 +1307,6 @@ bool EdgeWorker::ensureHttp()
 
 void EdgeWorker::closeConnection()
 {
-    disarmWatchdog();  // fd を閉じる前に番人を止める
     if (http != nullptr) {
         esp_http_client_close(http);
     }
@@ -1447,7 +1315,6 @@ void EdgeWorker::closeConnection()
 
 void EdgeWorker::dropHttp()
 {
-    disarmWatchdog();  // fd を閉じる前に番人を止める
     // 失敗した後のクライアントは使い回さず、作り直す (途中まで読んだ応答や内部状態を持ち越さない)。
     if (http != nullptr) {
         esp_http_client_cleanup(http);
@@ -1477,46 +1344,6 @@ void EdgeWorker::dropIfPeerClosed()
 }
 
 EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
-{
-    Reply r = exchangeGuarded(rq);
-    // どの経路で終わっても番人を止める (閉じる経路では closeConnection / dropHttp が先に止めている)。
-    disarmWatchdog();
-    if (wd_request_fired) {
-        wd_request_fired = false;
-        // 期限でソケットを shutdown した。応答が読めていても信用せず、タイムアウトとして捨てる。
-        dropHttp();
-        if (r.status != kErrAborted) {
-            r               = Reply{};
-            r.status        = kErrTimeout;
-            json_len        = 0;
-            json[0]         = '\0';
-            if (rq.binary_out != nullptr) {
-                rq.binary_out->clear();
-            }
-        }
-    }
-    return r;
-}
-
-void EdgeWorker::armWatchdog()
-{
-    // keep-alive の接続を使い回すなら、送る前から fd が分かっている。
-    wd_request_fired = false;
-    wd_token         = watchdogArm(http_open && http != nullptr ? esp_http_client_get_socket(http) : -1);
-}
-
-void EdgeWorker::disarmWatchdog()
-{
-    // fd を閉じる前 (closeConnection / dropHttp) と、リクエストの終わり (exchange) に呼ぶ。何度呼んでもよい。
-    if (wd_token != 0) {
-        if (watchdogDisarm(wd_token)) {
-            wd_request_fired = true;
-        }
-        wd_token = 0;
-    }
-}
-
-EdgeWorker::Reply EdgeWorker::exchangeGuarded(const Request& rq)
 {
     Reply r;
     json_len = 0;
@@ -1571,7 +1398,6 @@ EdgeWorker::Reply EdgeWorker::exchangeGuarded(const Request& rq)
     // ここから応答本文を読み終えるまでを 1 つの期限 (EDGE_TIMEOUT_MS) で縛る (protocol.md)。
     const bool was_open = http_open;
     request_started_ms  = nowMs();
-    armWatchdog();  // 絶対期限の番人 (armDeadline() が先に効くのが普通で、こちらは最後の砦)
     armDeadline();  // 接続は設定されたタイムアウトを 1 回だけ使う
     const esp_err_t err = esp_http_client_open(http, static_cast<int>(rq.body_len));
     if (err != ESP_OK) {
@@ -1580,9 +1406,6 @@ EdgeWorker::Reply EdgeWorker::exchangeGuarded(const Request& rq)
         return r;
     }
     http_open = true;
-    if (!watchdogSetFd(wd_token, esp_http_client_get_socket(http))) {
-        return fail(kErrTimeout);
-    }
     if (!was_open) {
         // 本文の最後の端数セグメントが Nagle で遅れないようにする。
         const int fd  = esp_http_client_get_socket(http);
@@ -1657,6 +1480,13 @@ bool EdgeWorker::armDeadline()
 {
     // リクエスト全体 (接続 + 送信 + ヘッダ + 本文) の期限までの残りを、次のブロッキング呼び出しの
     // タイムアウトにする。期限を過ぎていれば false (呼び出し側はタイムアウトとして打ち切る)。
+    //
+    // 既知の制限: esp_http_client_open() と esp_http_client_fetch_headers() は内部でループし、
+    // このタイムアウトを送受信 1 回ごとに適用する。応答を少しずつ返す相手では、リクエスト全体が
+    // 期限を超え得る。LAN 内の edge が相手なので許容する。アプリを閉じるときは end() が 1 秒で
+    // net タスクを切り離すので、実害は「切り離されたタスクが残っている間 begin() を断る」までに限られる。
+    // (ソケットを外から強制的に切る方式は、切る側のタスクのブロックと fd の取り違えのリスクが
+    //  上回るため採らない。docs/design/fw-app-step2.md §4.5)
     const uint32_t elapsed = nowMs() - request_started_ms;
     if (elapsed >= config::EDGE_TIMEOUT_MS) {
         return false;
