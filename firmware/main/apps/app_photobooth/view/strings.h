@@ -39,6 +39,8 @@ inline constexpr const char* kFaceCountLabel = "人数";
 inline constexpr const char* kFaceCountNone  = "--";
 inline constexpr const char* kNoCandidate    = "候補の写真がありません";  // 顔の有無が分からないとき
 inline constexpr const char* kNoFace         = "顔が見つからなかったよ";  // spec §9: 顔なしで時間切れ
+// edge に候補はあるが受け取れない・表示できないとき (保存はさせない)
+inline constexpr const char* kCandidateUnavailable = "候補の写真を表示できません";
 inline constexpr const char* kCaptured       = "撮れたよ";
 inline constexpr const char* kUploading      = "写真を準備中";
 inline constexpr const char* kExpiresLabel   = "削除予定";

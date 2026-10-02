@@ -101,7 +101,7 @@ private:
     bool handleResult(bool capture, uint32_t now_ms);
     void showHint(net::Hint hint, bool capture);
     const char* bandText(net::Hint hint) const;
-    // REVIEW: device の保持フレーム (無ければ「候補の写真がありません」) を出す。
+    // REVIEW (判定なしの撮影だけ): device の保持フレーム (無ければ「候補の写真がありません」) を出す。
     void showDeviceReview();
     void showReviewNoFace();
     void buildDiag(char* out, size_t len);
@@ -168,7 +168,7 @@ private:
     uint32_t last_frame_ms_  = 0;
     uint32_t last_frame_seq_ = 0;
 
-    // 候補フレーム (REVIEW で表示、撮り直し・終了で解放)
+    // 判定なしの撮影の候補フレーム (REVIEW で表示、撮り直し・終了で解放)。判定つきでは使わない
     hw::FrameCopy candidate_;
     // REVIEW で候補を表示できたか (false なら画面は「撮り直す」だけ)
     bool review_has_candidate_ = false;

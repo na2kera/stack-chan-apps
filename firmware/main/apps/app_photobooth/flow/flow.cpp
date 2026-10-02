@@ -557,8 +557,7 @@ void Flow::updateCapture(uint32_t now_ms)
     const uint32_t elapsed  = now_ms - state_since_ms_;
     const uint32_t total_ms = config::COUNTDOWN_SEC * 1000;
     if (elapsed >= total_ms) {
-        mclog::tagInfo(kTag, "capture timeout: {} ms, device candidate frame_id={}", elapsed,
-                       candidate_.valid() ? candidate_.frameId() : 0);
+        mclog::tagInfo(kTag, "capture timeout: {} ms ({})", elapsed, judged_ ? "ask edge for candidate" : "device candidate");
         review_wait_ = ReviewWait::None;
         if (judged_) {
             // 10 秒経過後に届いた結果は採用しない (spec §6.2)。ここで捨てる。
@@ -635,8 +634,9 @@ bool Flow::previewFrame(bool capture, uint32_t now_ms)
     // 判定は表示した時刻ではなく、カメラから取った時刻 (captured_ms) で行う。
     const bool still = !head_.isMoving() &&
                        static_cast<int32_t>(frame.captured_ms - (head_.lastMotionMs() + config::HEAD_SETTLE_MS)) > 0;
-    // edge の候補 JPEG が取れないときの予備として device でも 1 枚持つ。
-    if (capture && still) {
+    // device 側で候補を持つのは判定なしの撮影だけ。判定つきでは edge が保持するフレームだけが
+    // 保存対象なので、device の別フレームを「保存する」付きで見せない (画面と保存される写真をずらさない)。
+    if (capture && still && !judged_) {
         candidate_.assign(frame, frame_id);
     }
     // edge の顔判定。首が動いている間・止まった直後のフレームは送らない (ブレたフレームを判定・採用しない)。
@@ -675,8 +675,7 @@ void Flow::showDeviceReview()
         review_has_candidate_ = view_.showReview(stateTitle(State::Review), candidate_.pixels(), candidate_.width(),
                                                  candidate_.height());
     } else {
-        // 判定なしの撮影 (顔の有無が分からない) か、edge に候補があるのに表示できなかったとき。
-        // 顔なしとは限らないので「候補の写真がありません」のまま。
+        // 判定なしの撮影で、首が止まっているフレームが 1 枚も取れなかった (顔の有無は分からない)。
         mclog::tagWarn(kTag, "review without candidate");
         review_has_candidate_ = view_.showReview(stateTitle(State::Review), nullptr, 0, 0);
     }
@@ -729,9 +728,11 @@ void Flow::updateReview(const hw::Event& ev, uint32_t now_ms)
             review_has_candidate_ = true;
             return;
         }
-        // edge の候補を出せない。保存すると edge の候補が保存されるが、画面は device の保持フレーム。
-        mclog::tagWarn(kTag, "review: edge candidate unavailable ({}); show device frame", edge_.lastError());
-        showDeviceReview();
+        // edge には候補があるが、受け取れない・デコードできない・大きさが違う。見せられない写真を
+        // 保存させない: 「候補の写真を表示できません」と「撮り直す」だけにする。
+        mclog::tagWarn(kTag, "review: edge candidate cannot be shown ({}); retake only", edge_.lastError());
+        review_has_candidate_ = false;
+        view_.showReviewEmpty(stateTitle(State::Review), str::kCandidateUnavailable);
         return;
     }
 
