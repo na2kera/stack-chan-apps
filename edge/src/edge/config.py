@@ -80,7 +80,7 @@ class GalleryConfig:
 
 @dataclass(frozen=True)
 class ShareConfig:
-    text: str = "スタックチャンに撮ってもらいました！ #スタックチャン #StackChan"
+    text: str = "@na2kera_0510 のｽﾀｯｸﾁｬﾝに撮ってもらいました！　#ｽﾀｯｸﾁｬﾝ #スタックチャン #StackChan"
 
 
 @dataclass(frozen=True)
