@@ -1,0 +1,44 @@
+[server]
+host = "0.0.0.0"   # LAN 内の PC アドレスで listen。0.0.0.0 は開発時のみ
+port = 8765
+max_sessions = 8   # 同時に保持するセッション数。超えたら一番長くイベントの無いものを追い出す
+
+[auth]
+device_id = "stackchan-01"
+device_key = "change-me"   # 環境変数 EDGE_DEVICE_KEY が優先
+
+[capture]
+max_faces = 4
+countdown_sec = 10
+margin_ratio = 0.08
+min_face_width_ratio = 0.08
+eye_blink_max = 0.25
+mouth_smile_min = 0.55
+stable_frames = 2
+accept_consecutive = 2
+rgb565_byte_order = "little"
+max_width = 1280    # これより大きいフレーム (宣言・実サイズとも) は 400 image_too_large
+max_height = 960
+
+[head]
+gain_x = -0.05
+gain_y = 0.05
+deadband_px = 16
+step_max = 30
+min_interval_ms = 500
+search_step = 20
+x_min = -250
+x_max = 250
+y_min = 250
+y_max = 650
+
+[analysis]
+model_path = "models/face_landmarker.task"
+
+[gallery]
+mode = "mock"            # ステップ4で "http" を追加
+ttl_minutes = 60
+public_base_url = ""     # mock では http://<listen host>:<port> を使う
+
+[share]
+text = "スタックチャンに撮ってもらいました！ #スタックチャン #StackChan"

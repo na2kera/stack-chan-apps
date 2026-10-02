@@ -26,3 +26,4 @@ gallery/config.toml
 # runtime data
 gallery/storage/
 edge/tmp/
+edge/models/
