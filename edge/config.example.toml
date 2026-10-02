@@ -13,7 +13,7 @@ countdown_sec = 10
 margin_ratio = 0.08
 min_face_width_ratio = 0.08
 eye_blink_max = 0.25
-mouth_smile_min = 0.55
+mouth_smile_min = 0.35
 stable_frames = 2
 accept_consecutive = 2
 rgb565_byte_order = "little"
@@ -21,8 +21,8 @@ max_width = 1280    # これより大きいフレーム (宣言・実サイズ�
 max_height = 960
 
 [head]
-gain_x = -0.05
-gain_y = 0.05
+gain_x = -0.3
+gain_y = 0.3
 deadband_px = 16
 step_max = 30
 min_interval_ms = 500

@@ -35,15 +35,15 @@ def test_deadband(head: HeadConfig) -> None:
 
 
 def test_gain_and_sign(head: HeadConfig) -> None:
-    # 右に 80px ずれ → dx = 80 * -0.05 = -4、下に 40px → dy = 40 * 0.05 = 2
+    # 右に 80px ずれ → dx = 80 * -0.3 = -24、下に 40px → dy = 40 * 0.3 = 12
     cmd, st = step([centered_at(0.75, 0.5 + 40 / H)], head)
-    assert (cmd.dx, cmd.dy) == (-4, 2)
+    assert (cmd.dx, cmd.dy) == (-24, 12)
     assert st.last_command_ms == 10_000
     cmd, _ = step([centered_at(0.25)], head)
-    assert cmd.dx == 4  # 左右で符号が変わる
-    flipped = replace(head, gain_x=0.05)
+    assert cmd.dx == 24  # 左右で符号が変わる
+    flipped = replace(head, gain_x=0.3)
     cmd, _ = step([centered_at(0.75)], flipped)
-    assert cmd.dx == 4  # 符号は設定で校正できる
+    assert cmd.dx == 24  # 符号は設定で校正できる
 
 
 def test_step_max(head: HeadConfig) -> None:

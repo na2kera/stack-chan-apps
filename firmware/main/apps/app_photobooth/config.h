@@ -56,6 +56,12 @@ constexpr uint32_t HEAD_MOVE_TIMEOUT_MS = 3000;
 // 首が止まったと判定してから、この時間が過ぎて取ったフレームだけを候補にする (ブレ防止。spec §4)。
 // isMoving() は 100 ms ごとにしか問い合わせないので、その分の余裕も含む。
 constexpr uint32_t HEAD_SETTLE_MS = 150;
+// これより小さい首の指示は出さない (1°)。サーボの不感帯より小さい移動は「止まった」と報告されず、
+// 応答なし (HEAD_MOVE_TIMEOUT_MS) と誤判定されるため。
+constexpr int HEAD_MIN_STEP = 10;
+// HEAD_MOVE_TIMEOUT_MS を過ぎても動作中のとき、実際の角度が目標からこの範囲 (2°) なら止まったとみなす。
+// 範囲外なら本当に応答なしとして首を止める。
+constexpr int HEAD_SETTLE_TOLERANCE = 20;
 
 // ---- カメラ ----
 // プレビューの向き。純正は起動時に SetHMirror(false) にしているので、既定は純正のまま。

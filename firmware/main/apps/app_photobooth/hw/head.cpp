@@ -9,6 +9,7 @@
 #include <stackchan/stackchan.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "../config.h"
 
@@ -107,12 +108,25 @@ void Head::update(uint32_t now_ms)
         return;
     }
     if (now_ms - last_cmd_ms_ > cfg::HEAD_MOVE_TIMEOUT_MS) {
+        // 目標の近くまで来ているなら、サーボが「動作中」を返し続けているだけとみなして続行する
+        // (小さな移動や不感帯での微振動、ReadMove の読み取り失敗で起きる)。
+        auto& m        = motion();
+        const int cur_x = m.getCurrentYawAngle();
+        const int cur_y = m.getCurrentPitchAngle();
+        if (std::abs(cur_x - target_x_) <= cfg::HEAD_SETTLE_TOLERANCE &&
+            std::abs(cur_y - target_y_) <= cfg::HEAD_SETTLE_TOLERANCE) {
+            watching_ = false;
+            moving_   = false;
+            mclog::tagWarn(kTag, "servo still reports moving {} ms after command, but at ({},{}) near target ({},{}); treat as settled",
+                           now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_);
+            return;
+        }
         faulted_  = true;
         watching_ = false;
         moving_   = false;
         motion().stop();
-        mclog::tagError(kTag, "servo not settling {} ms after command (target x={} y={}); head disabled",
-                        now_ms - last_cmd_ms_, target_x_, target_y_);
+        mclog::tagError(kTag, "servo not settling {} ms after command (at x={} y={}, target x={} y={}); head disabled",
+                        now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_);
     }
 }
 
@@ -150,6 +164,12 @@ bool Head::nudge(int dx, int dy, uint32_t now_ms)
     }
     dx               = std::min(std::max(dx, -cfg::HEAD_STEP_MAX), cfg::HEAD_STEP_MAX);
     dy               = std::min(std::max(dy, -cfg::HEAD_STEP_MAX), cfg::HEAD_STEP_MAX);
+    // 1° 未満の指示は出さない (サーボの不感帯以下で、止まったと報告されないため)。
+    if (std::abs(dx) < cfg::HEAD_MIN_STEP) dx = 0;
+    if (std::abs(dy) < cfg::HEAD_MIN_STEP) dy = 0;
+    if (dx == 0 && dy == 0) {
+        return false;
+    }
     const int prev_x = target_x_;
     const int prev_y = target_y_;
     command(target_x_ + dx, target_y_ + dy, now_ms);

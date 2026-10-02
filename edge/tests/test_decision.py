@@ -101,7 +101,7 @@ def test_blink_threshold_inclusive(cap: CaptureConfig) -> None:
     assert v.all_eyes_open and v.all_smiling and v.conditions_met
 
 
-@pytest.mark.parametrize("kw", [{"smile_left": 0.3}, {"smile_right": 0.54}])
+@pytest.mark.parametrize("kw", [{"smile_left": 0.2}, {"smile_right": 0.34}])
 def test_one_side_not_smiling(cap: CaptureConfig, kw) -> None:
     v, _ = run([[face(**kw)], [face(**kw)]], cap)
     assert not v.all_smiling and not v.conditions_met
