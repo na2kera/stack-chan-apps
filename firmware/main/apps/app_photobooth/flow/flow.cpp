@@ -59,6 +59,7 @@ constexpr int kBtnXBack        = 0;  // X_QR: 戻る / 終了
 constexpr int kBtnXExit        = 1;
 constexpr int kBtnErrorRetry   = 0;  // ERROR: 再試行 / 終了
 constexpr int kBtnErrorExit    = 1;
+constexpr int kBtnErrorOnlyExit = 0;  // ERROR (再試行なし): 終了
 constexpr int kBtnDiagReconnect = 0;  // DIAG: 再接続 / 判定なしで撮影 (戻るは頭部タッチ)
 constexpr int kBtnDiagShoot     = 1;
 
@@ -208,15 +209,21 @@ void Flow::enter(State next, uint32_t now_ms)
             break;
 
         case State::PhotoQr:
-            view_.showPhotoQr(stateTitle(next), photo_url_, expires_at_);
+            if (!view_.showPhotoQr(stateTitle(next), photo_url_, expires_at_)) {
+                failQr(now_ms, "photo");
+                return;
+            }
             break;
 
         case State::XQr:
-            view_.showXQr(stateTitle(next), share_url_);
+            if (!view_.showXQr(stateTitle(next), share_url_)) {
+                failQr(now_ms, "share");
+                return;
+            }
             break;
 
         case State::Error:
-            view_.showError(stateTitle(next), error_reason_);
+            view_.showError(stateTitle(next), error_reason_, error_kind_ != ErrorKind::Qr);
             break;
 
         case State::Diag:
@@ -298,6 +305,15 @@ void Flow::failUpload(uint32_t now_ms, const char* reason)
     }
     error_reason_ = error_buf_;
     error_kind_   = ErrorKind::Upload;
+    enter(State::Error, now_ms);
+}
+
+void Flow::failQr(uint32_t now_ms, const char* which)
+{
+    // URL が QR に入らないなど。読めない画面を出したままにしない (URL 自体はログに出さない)。
+    mclog::tagError(kTag, "{} QR cannot be shown", which);
+    error_kind_   = ErrorKind::Qr;
+    error_reason_ = str::kErrQr;
     enter(State::Error, now_ms);
 }
 
@@ -830,6 +846,13 @@ void Flow::updateXQr(const hw::Event& ev, uint32_t now_ms)
 void Flow::updateError(const hw::Event& ev, uint32_t now_ms)
 {
     const int hit = buttonHit(ev);
+    if (error_kind_ == ErrorKind::Qr) {
+        // 「終了」だけの画面 (ボタン 0)。写真は公開済みなので cancel は送らない。
+        if (hit == kBtnErrorOnlyExit) {
+            enter(State::Idle, now_ms);
+        }
+        return;
+    }
     if (hit == kBtnErrorRetry) {
         mclog::tagInfo(kTag, "error: retry ({})", error_reason_);
         switch (error_kind_) {
@@ -873,6 +896,9 @@ void Flow::updateError(const hw::Event& ev, uint32_t now_ms)
                 enter(State::Uploading, now_ms);
                 break;
 
+            case ErrorKind::Qr:
+                break;  // 上で処理済み (再試行ボタンは無い)
+
             case ErrorKind::Edge:
             case ErrorKind::NoPc:
                 if (kEdgeEnabled && edge_.isOnline()) {
@@ -885,7 +911,7 @@ void Flow::updateError(const hw::Event& ev, uint32_t now_ms)
                 break;
         }
     } else if (hit == kBtnErrorExit) {
-        if (session_.active && judged_) {
+        if (session_.active && judged_ && !photo_ready_) {
             edge_.sessionCancel(session_);
         }
         enter(State::Idle, now_ms);

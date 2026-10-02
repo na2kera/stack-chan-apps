@@ -68,6 +68,7 @@ inline constexpr const char* kErrEdgeLost      = "PCとの接続が切れまし�
 inline constexpr const char* kErrNoPc          = "PC未接続のため保存できません";
 inline constexpr const char* kErrUploadFailed  = "写真を保存できませんでした";
 inline constexpr const char* kErrRetryExhausted = "再試行回数を超えました";
+inline constexpr const char* kErrQr             = "QRを表示できません";
 inline constexpr const char* kErrRetakeGuide   = "終了して撮り直してね";
 
 // ---- 診断画面 (DIAG) ----

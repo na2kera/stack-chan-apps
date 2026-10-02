@@ -80,12 +80,13 @@ public:
     void showReviewEmpty(const char* title, const char* text);
     // UPLOADING: 「写真を準備中」。captured=true なら上に「撮れたよ」を出す (自動採用のとき)。
     void showUploading(const char* title, bool captured);
-    // PHOTO_QR: 写真 QR + 削除予定時刻 + 「次へ」「撮り直す」
-    void showPhotoQr(const char* title, const char* photo_url, const char* expires_at);
-    // X_QR: 投稿 QR + 案内 + 「戻る」「終了」
-    void showXQr(const char* title, const char* share_url);
-    // ERROR: 理由 + 「再試行」「終了」
-    void showError(const char* title, const char* reason);
+    // PHOTO_QR: 写真 QR + 削除予定時刻 + 「次へ」「撮り直す」。QR を作れなければ false
+    // (呼び出し側が ERROR 画面に切り替える)。
+    bool showPhotoQr(const char* title, const char* photo_url, const char* expires_at);
+    // X_QR: 投稿 QR + 案内 + 「戻る」「終了」。QR を作れなければ false。
+    bool showXQr(const char* title, const char* share_url);
+    // ERROR: 理由 + 「再試行」「終了」。can_retry=false なら「終了」だけ (ボタン 0 =「終了」)。
+    void showError(const char* title, const char* reason, bool can_retry = true);
     // DIAG: 診断 (複数行、'\n' 区切り) + 「再接続」「判定なしで撮影」。戻るは頭部タッチ。
     void showDiag(const char* title, const char* body);
     // 診断の本文だけを差し替える。

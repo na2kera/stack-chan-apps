@@ -1061,8 +1061,16 @@ void EdgeWorker::pollPhoto(uint32_t now)
         const char* photo_url  = doc["photo_url"] | "";
         const char* share_url  = doc["share_url"] | "";
         const char* expires_at = doc["expires_at"] | "";
-        if (photo_url[0] == '\0' || strlen(photo_url) >= sizeof(info.photo_url) ||
-            strlen(share_url) >= sizeof(info.share_url) || strlen(expires_at) >= sizeof(info.expires_at)) {
+        if (photo_url[0] == '\0' || share_url[0] == '\0' || expires_at[0] == '\0') {
+            // ready なら 3 つとも必須 (protocol.md)。欠けた応答で QR を出さない。
+            info.status = PhotoInfo::Status::Error;
+            copyStr(info.reason, sizeof(info.reason), "bad_response");
+            mclog::tagWarn(kTag, "photo ready without {}", photo_url[0] == '\0'   ? "photo_url"
+                                                           : share_url[0] == '\0' ? "share_url"
+                                                                                  : "expires_at");
+            setErrorOp("photo", str::kNetBadJson);
+        } else if (strlen(photo_url) >= sizeof(info.photo_url) || strlen(share_url) >= sizeof(info.share_url) ||
+                   strlen(expires_at) >= sizeof(info.expires_at)) {
             // 切り詰めた URL の QR は出さない (spec §9「QR を捏造しない」)
             info.status = PhotoInfo::Status::Error;
             copyStr(info.reason, sizeof(info.reason), "bad_photo_url");

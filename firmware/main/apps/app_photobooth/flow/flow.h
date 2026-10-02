@@ -61,6 +61,7 @@ private:
         Edge,    // 撮影中に edge との通信が切れた → 繋がっていれば新しいセッション、無ければ DIAG
         Upload,  // 写真を保存できない → save を送り直す (回数の上限は EdgeClient が持つ)
         NoPc,    // 判定なしで撮影した写真は保存できない → Edge と同じ
+        Qr,      // QR を作れない → やり直しても同じなので「終了」だけ
     };
     // REVIEW で edge の応答を待っている段階。待っている間はボタンを出さない。
     enum class ReviewWait : uint8_t {
@@ -79,6 +80,8 @@ private:
     // edge との通信が切れたので撮影を止めて ERROR へ。
     void failEdge(uint32_t now_ms, const char* what);
     void failUpload(uint32_t now_ms, const char* reason);
+    // QR を作れなかったので ERROR (「終了」だけ) へ。
+    void failQr(uint32_t now_ms, const char* which);
     void requestExit(const char* by);
 
     void updateIdle(const hw::Event& ev, uint32_t now_ms);

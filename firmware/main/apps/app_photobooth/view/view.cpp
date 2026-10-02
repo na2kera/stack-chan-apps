@@ -408,11 +408,11 @@ void View::showUploading(const char* title, bool captured)
     textBox(*page_, page_->root(), kBodyNoButtons, text, font::body(), color::text(), Align::Center);
 }
 
-void View::showPhotoQr(const char* title, const char* photo_url, const char* expires_at)
+bool View::showPhotoQr(const char* title, const char* photo_url, const char* expires_at)
 {
     LvglLockGuard lock;
     newPage();
-    qr(*page_, kQrX, kQrY, kQrSize, photo_url);
+    const bool ok = qr(*page_, kQrX, kQrY, kQrSize, photo_url);
     // 右欄: 1 行目に状態名、その下に削除予定時刻
     textBox(*page_, page_->root(), Rect{kQrTextX, kQrY, kQrTextW, 28}, title, font::body(), color::text(),
             Align::Left);
@@ -422,13 +422,14 @@ void View::showPhotoQr(const char* title, const char* photo_url, const char* exp
             Align::Left);
     static const char* const kLabels[] = {str::kBtnNext, str::kBtnRetake};
     addButtons(kLabels, 2);
+    return ok;
 }
 
-void View::showXQr(const char* title, const char* share_url)
+bool View::showXQr(const char* title, const char* share_url)
 {
     LvglLockGuard lock;
     newPage();
-    qr(*page_, kQrX, kQrY, kQrSize, share_url);
+    const bool ok = qr(*page_, kQrX, kQrY, kQrSize, share_url);
     textBox(*page_, page_->root(), Rect{kQrTextX, kQrY, kQrTextW, 28}, title, font::body(), color::text(),
             Align::Left);
     const int32_t y = kQrY + 40;
@@ -436,16 +437,22 @@ void View::showXQr(const char* title, const char* share_url)
             font::body(), color::text(), Align::Left);
     static const char* const kLabels[] = {str::kBtnBack, str::kBtnExit};
     addButtons(kLabels, 2);
+    return ok;
 }
 
-void View::showError(const char* title, const char* reason)
+void View::showError(const char* title, const char* reason, bool can_retry)
 {
     LvglLockGuard lock;
     newPage();
     titleBar(*page_, title);
     textBox(*page_, page_->root(), kBody, reason, font::body(), color::text(), Align::Center);
-    static const char* const kLabels[] = {str::kBtnRetry, str::kBtnExit};
-    addButtons(kLabels, 2);
+    if (can_retry) {
+        static const char* const kLabels[] = {str::kBtnRetry, str::kBtnExit};
+        addButtons(kLabels, 2);
+    } else {
+        static const char* const kLabels[] = {str::kBtnExit};
+        addButtons(kLabels, 1);
+    }
 }
 
 void View::showDiag(const char* title, const char* body)
