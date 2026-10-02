@@ -49,9 +49,14 @@ Network::Status Network::status()
     if (g_status_valid.load() && now - g_status_checked_ms.load() < kStatusCacheMs) {
         return static_cast<Status>(g_status.load());
     }
+    return statusNow();
+}
+
+Network::Status Network::statusNow()
+{
     const Status s      = readStatus();
     g_status            = static_cast<uint8_t>(s);
-    g_status_checked_ms = now;
+    g_status_checked_ms = GetHAL().millis();
     g_status_valid      = true;
     return s;
 }

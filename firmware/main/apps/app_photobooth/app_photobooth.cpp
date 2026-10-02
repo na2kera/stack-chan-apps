@@ -57,7 +57,8 @@ void AppPhotobooth::onOpen()
     //   - 首・カメラ・音声はこの後で初期化する (待っている間はトルクも出力も入れない)。
     if (photobooth::config::EDGE_ENABLED) {
         using photobooth::net::Network;
-        if (Network::status() == Network::Status::Connected) {
+        // statusNow(): 前にアプリを開いていたときの使い回し (200 ms) を見ない。
+        if (Network::statusNow() == Network::Status::Connected) {
             mclog::tagInfo(getAppInfo().name, "wifi already connected");
         } else if (!Network::hasCredentials()) {
             mclog::tagWarn(getAppInfo().name, "wifi: no SSID in NVS; start offline (configure Wi-Fi in SETUP)");
@@ -66,6 +67,7 @@ void AppPhotobooth::onOpen()
             const uint32_t t0 = GetHAL().millis();
             GetHAL().startNetwork([this](std::string_view msg) { _view->setWifiMessage(msg); });
             mclog::tagInfo(getAppInfo().name, "wifi connected after {} ms", GetHAL().millis() - t0);
+            Network::statusNow();  // 繋がった状態を使い回しに反映する (待つ前の「未接続」を残さない)
         }
     }
     const uint32_t now = GetHAL().millis();

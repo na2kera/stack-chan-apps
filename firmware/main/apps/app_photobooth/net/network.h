@@ -31,6 +31,9 @@ public:
 
     // 今の状態。Flow (毎 tick) と net タスクの両方から呼ばれるので、結果を 200 ms 使い回す。
     static Status status();
+    // 使い回しをせずに今の状態を問い合わせる (結果は status() の使い回しにも反映する)。
+    // 使い回しはファイルスコープなので、アプリを開き直した直後の判断 (onOpen) にはこちらを使う。
+    static Status statusNow();
 
     // 診断画面用。繋がっていなければ ssid / ip は ""、rssi は 0。
     static void info(char* ssid, size_t ssid_len, char* ip, size_t ip_len, int& rssi);
