@@ -14,6 +14,7 @@
 #include "hw/camera.h"
 #include "hw/head.h"
 #include "hw/input.h"
+#include "net/http_edge_client.h"
 #include "view/view.h"
 
 using namespace mooncake;
@@ -45,9 +46,10 @@ void AppPhotobooth::onOpen()
     _head   = std::make_unique<photobooth::hw::Head>();
     _camera = std::make_unique<photobooth::hw::Camera>();
     _view   = std::make_unique<photobooth::view::View>(*_input);
-    _flow   = std::make_unique<photobooth::Flow>(*_camera, *_head, *_audio, *_view);
+    _edge   = photobooth::net::createEdgeClient();
+    _flow   = std::make_unique<photobooth::Flow>(*_camera, *_head, *_audio, *_view, *_edge);
 
-    // 初期化順は独立ファーム版 (device/src/main.cpp) と同じ: 入力 → 音声 → 首 → カメラ → 状態機械。
+    // 初期化順は独立ファーム版 (device/src/main.cpp) と同じ: 入力 → 音声 → 首 → カメラ → 通信 → 状態機械。
     _input->begin();
     if (!_audio->begin()) {
         mclog::tagWarn(getAppInfo().name, "audio unavailable; continue without voice");
@@ -57,6 +59,10 @@ void AppPhotobooth::onOpen()
     const bool view_ok   = _view->begin();
     if (!view_ok) {
         mclog::tagWarn(getAppInfo().name, "preview buffer unavailable");
+    }
+    // Wi-Fi の起動依頼と net タスクの起動。ブロックしない (接続は待機画面の右下に出る)。
+    if (!_edge->begin()) {
+        mclog::tagWarn(getAppInfo().name, "edge client unavailable: {}", _edge->lastError());
     }
     _flow->begin(now, camera_ok, view_ok);
 }
@@ -77,6 +83,8 @@ void AppPhotobooth::onClose()
 
     // 逆順に後始末する。首は neutral へ戻す指示を出し、トルクの扱いを純正の既定に戻す。
     _flow->end(now);
+    // net タスクを止める (1 秒で止まらなければ切り離す)。Wi-Fi は切らない (純正の他のアプリが使う)。
+    _edge->end();
     _input->end();
     _camera->end();
     _audio->end();
@@ -84,6 +92,7 @@ void AppPhotobooth::onClose()
     _view->end();
 
     _flow.reset();
+    _edge.reset();
     _view.reset();
     _camera.reset();
     _head.reset();

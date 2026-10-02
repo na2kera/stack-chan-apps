@@ -7,6 +7,7 @@
 
 #include <esp_heap_caps.h>
 #include <hal/hal.h>
+#include <hal/utils/jpeg_to_image/jpeg_decoder.h>
 #include <mooncake_log.h>
 
 #include <cstdio>
@@ -25,13 +26,32 @@ namespace {
 constexpr const char* kTag = "PB-View";
 
 // プレビューに重ねる領域 (独立ファーム版と同じ)
-// COMPOSE: 下端の案内帯
-constexpr Rect kComposeBand{0, kScreenH - 40, kScreenW, 40};
+// COMPOSE / CAPTURE: 下端の案内帯
+constexpr Rect kBand{0, kScreenH - 40, kScreenW, 40};
 // CAPTURE: 右上の人数・残り秒数
 constexpr Rect kCaptureBox{kScreenW - 124, 0, 124, 84};
 
 constexpr Rect kBody{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - kButtonBarH - 8};
 constexpr Rect kBodyNoButtons{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - 8};
+
+// 待機: ボタン帯のすぐ上の 1 行。左に警告、右に接続状態 (「Wi-Fi接続中」が入る幅)。
+constexpr int32_t kIdleStatusY = kScreenH - kButtonBarH - 26;
+constexpr int32_t kIdleLinkW   = 120;
+constexpr Rect kIdleLink{kScreenW - 8 - kIdleLinkW, kIdleStatusY, kIdleLinkW, 24};
+constexpr Rect kIdleWarning{8, kIdleStatusY, kScreenW - 16 - kIdleLinkW - 4, 24};
+
+const char* idleLinkText(IdleLink link)
+{
+    switch (link) {
+        case IdleLink::Online:
+            return str::kPcOnline;
+        case IdleLink::WifiConnecting:
+            return str::kWifiConnecting;
+        case IdleLink::Offline:
+            break;
+    }
+    return str::kPcOffline;
+}
 
 }  // namespace
 
@@ -67,7 +87,12 @@ void View::end()
         preview_img_  = nullptr;
         label_faces_  = nullptr;
         label_remain_ = nullptr;
+        label_status_ = nullptr;
+        band_panel_   = nullptr;
+        band_label_   = nullptr;
+        label_diag_   = nullptr;
         page_.reset();
+        review_image_.reset();  // lv_image を消してから画像を解放する
     }
     if (preview_buf_ != nullptr) {
         heap_caps_free(preview_buf_);
@@ -99,7 +124,12 @@ void View::newPage()
     preview_img_  = nullptr;
     label_faces_  = nullptr;
     label_remain_ = nullptr;
+    label_status_ = nullptr;
+    band_panel_   = nullptr;
+    band_label_   = nullptr;
+    label_diag_   = nullptr;
     page_.reset();
+    review_image_.reset();  // 前の画面の lv_image を消してから画像を解放する
     page_ = std::make_unique<Page>(lv_screen_active());
     ++screen_id_;
 }
@@ -130,7 +160,20 @@ void View::addPreview(bool camera_ok)
     preview_img_ = img.get();
 }
 
-void View::showIdle(bool pc_online, const char* warning)
+// LvglLockGuard の中で呼ぶ。下端の案内帯 (プレビューに重ねる)。
+void View::addBand(const char* text, bool hidden)
+{
+    auto& band = panel(*page_, page_->root(), kBand, color::overlayBg());
+    auto& label = textBox(*page_, band.get(), Rect{0, 0, kBand.w, kBand.h}, text, font::body(), color::overlayText(),
+                          Align::Center);
+    band_panel_ = band.get();
+    band_label_ = label.get();
+    if (hidden) {
+        lv_obj_add_flag(band_panel_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void View::showIdle(IdleLink link, const char* warning)
 {
     LvglLockGuard lock;
     newPage();
@@ -145,18 +188,23 @@ void View::showIdle(bool pc_online, const char* warning)
     textBox(*page_, page_->root(), touch, str::kIdleTouchStart, font::body(), color::muted(), Align::Center);
 
     // ボタン帯のすぐ上の 1 行: 左に警告、右に PC 接続状態 (独立ファーム版は画面下端に置いていた)。
-    const int32_t status_y = kScreenH - kButtonBarH - 26;
     if (warning != nullptr) {
-        textBox(*page_, page_->root(), Rect{8, status_y, 200, 24}, warning, font::body(), color::warn(), Align::Left);
+        textBox(*page_, page_->root(), kIdleWarning, warning, font::body(), color::warn(), Align::Left);
     }
-    if (!pc_online) {
-        auto& pc = textBox(*page_, page_->root(), Rect{kScreenW - 108, status_y, 100, 24}, str::kPcOffline,
-                           font::body(), color::muted(), Align::Left);
-        pc.setTextAlign(LV_TEXT_ALIGN_RIGHT);
-    }
+    auto& pc = textBox(*page_, page_->root(), kIdleLink, idleLinkText(link), font::body(), color::muted(), Align::Left);
+    pc.setTextAlign(LV_TEXT_ALIGN_RIGHT);
+    label_status_ = pc.get();
 
     static const char* const kLabels[] = {str::kBtnExit};
     addButtons(kLabels, 1);
+}
+
+void View::updateIdleStatus(IdleLink link)
+{
+    LvglLockGuard lock;
+    if (label_status_ != nullptr) {
+        lv_label_set_text(label_status_, idleLinkText(link));
+    }
 }
 
 void View::showAnnounce(const char* title)
@@ -172,9 +220,7 @@ void View::showCompose(bool camera_ok)
     LvglLockGuard lock;
     newPage();
     addPreview(camera_ok);
-    auto& band = panel(*page_, page_->root(), kComposeBand, color::overlayBg());
-    textBox(*page_, band.get(), Rect{0, 0, kComposeBand.w, kComposeBand.h}, str::kCompose, font::body(),
-            color::overlayText(), Align::Center);
+    addBand(str::kCompose, false);
 }
 
 void View::showCapture(bool camera_ok)
@@ -197,19 +243,38 @@ void View::showCapture(bool camera_ok)
     remain.setText("");
     remain.align(LV_ALIGN_TOP_MID, 0, 30);
     label_remain_ = remain.get();
+
+    // 案内帯は hint があるときだけ出す (setBand)。
+    addBand(str::kCompose, true);
 }
 
-void View::updateCaptureOverlay(int remaining_sec, int face_count)
+void View::setBand(const char* text)
+{
+    LvglLockGuard lock;
+    if (band_panel_ == nullptr || band_label_ == nullptr) {
+        return;
+    }
+    if (text == nullptr) {
+        lv_obj_add_flag(band_panel_, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_label_set_text(band_label_, text);
+    lv_obj_remove_flag(band_panel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void View::updateCaptureOverlay(int remaining_sec, int face_count, int target)
 {
     LvglLockGuard lock;
     if (label_faces_ == nullptr || label_remain_ == nullptr) {
         return;
     }
-    char buf[24];
+    char buf[32];
     if (face_count < 0) {
         snprintf(buf, sizeof(buf), "%s %s", str::kFaceCountLabel, str::kFaceCountNone);
+    } else if (target <= 0) {
+        snprintf(buf, sizeof(buf), "%s %d/%s", str::kFaceCountLabel, face_count, str::kFaceCountNone);
     } else {
-        snprintf(buf, sizeof(buf), "%s %d", str::kFaceCountLabel, face_count);
+        snprintf(buf, sizeof(buf), "%s %d/%d", str::kFaceCountLabel, face_count, target);
     }
     lv_label_set_text(label_faces_, buf);
     lv_obj_align(label_faces_, LV_ALIGN_TOP_MID, 0, 4);
@@ -266,12 +331,54 @@ bool View::showReview(const char* title, const uint16_t* pixels, int width, int 
     return false;
 }
 
-void View::showUploading(const char* title)
+bool View::showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len)
+{
+    // デコード (数十 ms) は LVGL のロックの外でする。出力は RGB565 LE (プレビューと同じ並び)。
+    auto image = jpeg_dec::decode_to_lvgl(jpeg, len);
+    if (image == nullptr || image->image_dsc() == nullptr) {
+        mclog::tagWarn(kTag, "review jpeg ({} bytes) cannot be decoded", len);
+        return false;
+    }
+    const auto* dsc = image->image_dsc();
+    if (static_cast<int32_t>(dsc->header.w) > kScreenW || static_cast<int32_t>(dsc->header.h) > kScreenH) {
+        mclog::tagWarn(kTag, "review jpeg {}x{} is larger than the screen", static_cast<int>(dsc->header.w),
+                       static_cast<int>(dsc->header.h));
+        return false;
+    }
+    LvglLockGuard lock;
+    newPage();
+    review_image_ = std::move(image);  // 画面が参照している間は持ち続ける (newPage / end で解放)
+    auto& img     = page_->add<Image>(page_->root());
+    img.setSrc(review_image_->image_dsc());
+    img.align(LV_ALIGN_CENTER, 0, 0);
+    titleBar(*page_, title);
+    static const char* const kLabels[] = {str::kBtnSave, str::kBtnRetake};
+    addButtons(kLabels, 2);
+    return true;
+}
+
+void View::showReviewEmpty(const char* title, const char* text)
 {
     LvglLockGuard lock;
     newPage();
     titleBar(*page_, title);
-    textBox(*page_, page_->root(), kBodyNoButtons, str::kUploading, font::body(), color::text(), Align::Center);
+    textBox(*page_, page_->root(), kBody, text, font::body(), color::text(), Align::Center);
+    static const char* const kLabels[] = {str::kBtnRetake};
+    addButtons(kLabels, 1);
+}
+
+void View::showUploading(const char* title, bool captured)
+{
+    char text[64];
+    if (captured) {
+        snprintf(text, sizeof(text), "%s\n%s", str::kCaptured, str::kUploading);
+    } else {
+        snprintf(text, sizeof(text), "%s", str::kUploading);
+    }
+    LvglLockGuard lock;
+    newPage();
+    titleBar(*page_, title);
+    textBox(*page_, page_->root(), kBodyNoButtons, text, font::body(), color::text(), Align::Center);
 }
 
 void View::showPhotoQr(const char* title, const char* photo_url, const char* expires_at)
@@ -312,6 +419,29 @@ void View::showError(const char* title, const char* reason)
     textBox(*page_, page_->root(), kBody, reason, font::body(), color::text(), Align::Center);
     static const char* const kLabels[] = {str::kBtnRetry, str::kBtnExit};
     addButtons(kLabels, 2);
+}
+
+void View::showDiag(const char* title, const char* body)
+{
+    LvglLockGuard lock;
+    newPage();
+    titleBar(*page_, title);
+    // 「戻る」はボタン帯に入らない (最大 2 つ) ので頭部タッチ。タイトル帯の右に案内を出す。
+    auto& hint = textBox(*page_, page_->root(), Rect{kScreenW - 8 - 180, 0, 180, kTitleH}, str::kDiagBackHint,
+                         font::body(), color::text(), Align::Left);
+    hint.setTextAlign(LV_TEXT_ALIGN_RIGHT);
+    auto& label = textBox(*page_, page_->root(), kBody, body, font::body(), color::text(), Align::Left);
+    label_diag_ = label.get();
+    static const char* const kLabels[] = {str::kBtnReconnect, str::kBtnShootNoJudge};
+    addButtons(kLabels, 2);
+}
+
+void View::updateDiagBody(const char* body)
+{
+    LvglLockGuard lock;
+    if (label_diag_ != nullptr) {
+        lv_label_set_text(label_diag_, body);
+    }
 }
 
 }  // namespace photobooth::view

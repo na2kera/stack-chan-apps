@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-// 写真撮影アプリ (docs/design/fw-app-step1.md)。純正ランチャーから開く Mooncake アプリ。
+// 写真撮影アプリ (docs/design/fw-app-step1.md, fw-app-step2.md)。純正ランチャーから開く Mooncake アプリ。
 #pragma once
 #include <mooncake.h>
 
@@ -17,6 +17,9 @@ class Camera;
 class Head;
 class Input;
 }  // namespace hw
+namespace net {
+class EdgeClient;
+}
 namespace view {
 class View;
 }
@@ -39,5 +42,6 @@ private:
     std::unique_ptr<photobooth::hw::Head> _head;
     std::unique_ptr<photobooth::hw::Camera> _camera;
     std::unique_ptr<photobooth::view::View> _view;
+    std::unique_ptr<photobooth::net::EdgeClient> _edge;  // edge 無効ビルドでは何もしないスタブ
     std::unique_ptr<photobooth::Flow> _flow;
 };

@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-// 撮影フローの状態 (docs/spec.md §4 の表と 1:1)。device/src/app/state.h の移植。
+// 撮影フローの状態 (docs/spec.md §4 の表 + 診断画面 DIAG)。device/src/app/state.h の移植。
 #pragma once
 
 #include <cstdint>
@@ -22,6 +22,7 @@ enum class State : uint8_t {
     PhotoQr,
     XQr,
     Error,
+    Diag,  // 接続診断 (edge に繋がらないときに待機画面のタッチで開く。fw-app-step2.md §4)
 };
 
 // ログ用の名前 (spec §4 の表記)。
@@ -46,6 +47,8 @@ inline const char* stateName(State s)
             return "X_QR";
         case State::Error:
             return "ERROR";
+        case State::Diag:
+            return "DIAG";
     }
     return "?";
 }
@@ -72,6 +75,8 @@ inline const char* stateTitle(State s)
             return str::kTitleXQr;
         case State::Error:
             return str::kTitleError;
+        case State::Diag:
+            return str::kTitleDiag;
     }
     return "";
 }
