@@ -23,7 +23,7 @@ struct JpegInfo {
 
 enum class JpegStatus : uint8_t {
     Ok,           // ベースライン (SOF0)、8 ビット、1 または 3 成分
-    Invalid,      // JPEG として読めない (データ不足・長さ不正・SOF の前に SOS / EOI など)
+    Invalid,      // JPEG として読めない (データ不足・長さ不正・SOF0 の長さが成分数と合わない・SOF の前に SOS / EOI など)
     Unsupported,  // 読めたがベースラインではない (SOF1 / SOF2 など、8 ビット以外、成分数が 1・3 以外)
 };
 

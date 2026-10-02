@@ -58,6 +58,11 @@ JpegStatus readJpegInfo(const uint8_t* data, size_t len, JpegInfo& out)
             if (out.width <= 0 || out.height <= 0) {
                 return JpegStatus::Invalid;
             }
+            // SOF0 の長さは 8 + 成分ごとの 3 バイト (ID・サンプリング係数・量子化表) とちょうど一致する
+            // (セグメント全体がバッファに収まることは上で確認済み)。合わなければ壊れている。
+            if (marker == 0xC0 && seg != 8 + 3 * static_cast<size_t>(out.components)) {
+                return JpegStatus::Invalid;
+            }
             // 純正のデコーダで出せるのはベースラインだけ。
             const bool baseline = marker == 0xC0 && out.precision == 8 && (out.components == 1 || out.components == 3);
             return baseline ? JpegStatus::Ok : JpegStatus::Unsupported;
