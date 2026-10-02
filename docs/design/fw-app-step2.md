@@ -20,7 +20,7 @@
 | HTTP | ESP-IDF `esp_http_client`（keep-alive、タイムアウト 3 秒） | 追加依存なし |
 | JSON | `components/ArduinoJson`（v7.4.2、純正が取得済み） | 独立ファーム版と同じ |
 | 候補 JPEG | 純正 `hal/utils/jpeg_to_image/jpeg_decoder.h` の `jpeg_dec::decode_to_lvgl` | `hal_ws_avatar.cpp` と同じ |
-| 名前解決 | `EDGE_HOST` は IP か `.local` 名。`.local` は `mdns` が使えれば `mdns_query_a`、無ければ IP のみ対応と README に書く | PC の IP は DHCP で変わる（実際に 192.168.0.167 → .35 に変わった） |
+| 名前解決 | `EDGE_HOST` は IP アドレス。`.local` 名 (mDNS) は依存の追加が要るので今回は入れない (提案として README に書く) | PC の IP は DHCP で変わる (実際に 192.168.0.167 → .35 に変わった) ので、診断画面に接続先を出す |
 | 設定 | `app_photobooth/config_local.h`（.gitignore）。`config_local.example.h` をコミット。`__has_include` で無ければ edge 無効 | 鍵を Git に入れない |
 
 ## 3. 構成（追加・変更）
