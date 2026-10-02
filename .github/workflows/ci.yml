@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       device: ${{ steps.filter.outputs.device }}
+      edge: ${{ steps.filter.outputs.edge }}
+      gallery: ${{ steps.filter.outputs.gallery }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -18,6 +20,12 @@ jobs:
           filters: |
             device:
               - 'device/**'
+              - '.github/workflows/ci.yml'
+            edge:
+              - 'edge/**'
+              - '.github/workflows/ci.yml'
+            gallery:
+              - 'gallery/**'
               - '.github/workflows/ci.yml'
 
   device-build:
@@ -43,3 +51,43 @@ jobs:
         run: |
           cp include/config.example.h include/config.h
           pio run
+
+  edge-test:
+    needs: changes
+    if: needs.changes.outputs.edge == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.9'
+          enable-cache: true
+          cache-dependency-glob: edge/uv.lock
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test (no model, no hardware)
+        run: uv run pytest
+
+  gallery-test:
+    needs: changes
+    if: needs.changes.outputs.gallery == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gallery
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: gallery/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Test
+        run: npm test
