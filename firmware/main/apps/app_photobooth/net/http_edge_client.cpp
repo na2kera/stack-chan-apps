@@ -73,7 +73,9 @@ constexpr uint32_t kStatsIntervalMs     = 5000;
 constexpr uint32_t kIdleWaitMs          = 20;
 constexpr int kHttpRxBuf                = 1024;
 constexpr int kHttpTxBuf                = 1024;  // 1 行目 (メソッド + パス) とヘッダ 1 本ずつが入る大きさ
-constexpr size_t kWriteChunk            = 8192;  // フレーム本文を書く単位 (合間に時間切れと終了要求を見る)
+constexpr size_t kWriteChunk            = 8192;  // フレーム本文を書く単位 (合間に期限と終了要求を見る)
+constexpr size_t kReadChunk             = 4096;  // 応答本文を読む単位 (同上)
+constexpr int kMinOpTimeoutMs           = 50;    // 期限の残りが僅かでも、1 回の送受信にはこれだけ待つ
 
 // QVGA RGB565 1 枚分。これより大きいフレームは offerFrame() で断る。
 constexpr size_t kSlotBytes = 320 * 240 * 2;
@@ -236,6 +238,8 @@ struct EdgeWorker {
                   bool retry_transport);
     Reply exchange(const Request& rq);
     bool ensureHttp();
+    bool armDeadline();
+    int readBody(char* dst, size_t cap, size_t& got);
     void closeConnection();
     void dropHttp();
     void dropIfPeerClosed();
@@ -286,6 +290,7 @@ struct EdgeWorker {
     bool http_open                = false;  // TCP 接続を持っている (と思っている)
     bool sending_cancel           = false;  // 終了要求の後でも送ってよいリクエスト (session_cancel) の最中
     bool frame_headers_set        = false;
+    uint32_t request_started_ms   = 0;      // 今のリクエストの期限の起点 (exchange の中だけで使う)
     char json[kMaxJsonBody + 1]   = {};     // 直近の応答本文
     size_t json_len               = 0;
     int send_idx                  = 1;
@@ -1271,7 +1276,7 @@ bool EdgeWorker::ensureHttp()
     cfg.port                  = local::kEdgePort;
     cfg.path                  = "/";
     cfg.transport_type        = HTTP_TRANSPORT_OVER_TCP;
-    cfg.timeout_ms            = static_cast<int>(config::EDGE_TIMEOUT_MS);  // 接続・1 回の送受信それぞれの上限
+    cfg.timeout_ms            = static_cast<int>(config::EDGE_TIMEOUT_MS);  // リクエストごとに armDeadline() が残り時間へ縮める
     cfg.disable_auto_redirect = true;
     cfg.buffer_size           = kHttpRxBuf;
     cfg.buffer_size_tx        = kHttpTxBuf;
@@ -1337,6 +1342,12 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     if (rq.binary_out != nullptr) {
         rq.binary_out->clear();
     }
+    // 途中で失敗したら、クライアントごと捨てる (読み残し・内部状態を次のリクエストに持ち越さない)。
+    auto fail = [this, &r](int status) {
+        dropHttp();
+        r.status = status;
+        return r;
+    };
     if (quit.load() && !sending_cancel) {
         r.status = kErrAborted;
         return r;
@@ -1375,8 +1386,10 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     }
 
     // 接続 (まだなら) + リクエスト行とヘッダの送信。Content-Length は esp_http_client が付ける。
+    // ここから応答本文を読み終えるまでを 1 つの期限 (EDGE_TIMEOUT_MS) で縛る (protocol.md)。
     const bool was_open = http_open;
-    const uint32_t t0   = nowMs();
+    request_started_ms  = nowMs();
+    armDeadline();
     const esp_err_t err = esp_http_client_open(http, static_cast<int>(rq.body_len));
     if (err != ESP_OK) {
         r.status = err == ESP_ERR_HTTP_CONNECT ? kErrConnect : kErrSend;
@@ -1393,75 +1406,61 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
         }
     }
 
-    // 本文。大きいフレームは区切って書き、合間に全体の時間切れと終了要求を見る。
+    // 本文。大きいフレームは区切って書き、合間に期限と終了要求を見る。
     size_t sent = 0;
     while (sent < rq.body_len) {
         if (quit.load() && !sending_cancel) {
-            dropHttp();
-            r.status = kErrAborted;
-            return r;
+            return fail(kErrAborted);
         }
-        if (nowMs() - t0 >= config::EDGE_TIMEOUT_MS) {
-            dropHttp();
-            r.status = kErrTimeout;
-            return r;
+        if (!armDeadline()) {
+            return fail(kErrTimeout);
         }
         const int chunk = static_cast<int>(std::min(rq.body_len - sent, kWriteChunk));
         const int n     = esp_http_client_write(http, reinterpret_cast<const char*>(rq.body + sent), chunk);
         if (n <= 0) {
-            dropHttp();
-            r.status = kErrSend;
-            return r;
+            // 書き込みの待ちが期限に達したのか、接続が切れたのかを分ける。
+            return fail(armDeadline() ? kErrSend : kErrTimeout);
         }
         sent += static_cast<size_t>(n);
     }
 
+    if (!armDeadline()) {
+        return fail(kErrTimeout);
+    }
     const int64_t content_len = esp_http_client_fetch_headers(http);
     if (content_len < 0) {
-        r.status = content_len == -ESP_ERR_HTTP_EAGAIN ? kErrTimeout : kErrLost;
-        dropHttp();
-        return r;
+        return fail(content_len == -ESP_ERR_HTTP_EAGAIN || !armDeadline() ? kErrTimeout : kErrLost);
     }
     const int status = esp_http_client_get_status_code(http);
 
     if (rq.binary_out != nullptr && status == 200) {
         // 候補 JPEG。Content-Length が必要 (edge は付ける)。
         if (content_len <= 0 || static_cast<size_t>(content_len) > kMaxCandidateBytes) {
-            dropHttp();
-            r.status = kErrBodyTooLarge;
-            return r;
+            return fail(kErrBodyTooLarge);
         }
         const size_t want = static_cast<size_t>(content_len);
         try {
             rq.binary_out->resize(want);  // 512 B を超える確保は PSRAM に行く (CONFIG_SPIRAM_USE_MALLOC)
         } catch (const std::bad_alloc&) {
             mclog::tagError(kTag, "candidate alloc failed ({} bytes)", want);
-            dropHttp();
-            r.status = kErrInternal;
-            return r;
+            return fail(kErrInternal);
         }
-        const int got = esp_http_client_read_response(http, reinterpret_cast<char*>(rq.binary_out->data()),
-                                                      static_cast<int>(want));
-        if (got != static_cast<int>(want) || !esp_http_client_is_complete_data_received(http)) {
+        size_t got   = 0;
+        const int rc = readBody(reinterpret_cast<char*>(rq.binary_out->data()), want, got);
+        if (rc != 0 || got != want) {
             rq.binary_out->clear();
-            dropHttp();
-            r.status = kErrTimeout;
-            return r;
+            return fail(rc != 0 ? rc : kErrLost);
         }
     } else {
         if (content_len > static_cast<int64_t>(kMaxJsonBody)) {
-            dropHttp();
-            r.status = kErrBodyTooLarge;
-            return r;
+            return fail(kErrBodyTooLarge);
         }
-        const int got = esp_http_client_read_response(http, json, static_cast<int>(kMaxJsonBody));
-        json_len      = got > 0 ? static_cast<size_t>(got) : 0;
+        const int rc   = readBody(json, kMaxJsonBody, json_len);
         json[json_len] = '\0';
-        if (!esp_http_client_is_complete_data_received(http)) {
-            const bool full = json_len >= kMaxJsonBody;
-            dropHttp();
-            r.status = full ? kErrBodyTooLarge : kErrLost;
-            return r;
+        if (rc != 0) {
+            json_len = 0;
+            json[0]  = '\0';
+            return fail(rc);
         }
         if (!isSuccess(status)) {
             JsonDocument doc;
@@ -1476,6 +1475,49 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     }
     r.status = status;
     return r;
+}
+
+bool EdgeWorker::armDeadline()
+{
+    // リクエスト全体 (接続 + 送信 + ヘッダ + 本文) の期限までの残りを、次のブロッキング呼び出しの
+    // タイムアウトにする。期限を過ぎていれば false (呼び出し側はタイムアウトとして打ち切る)。
+    const uint32_t elapsed = nowMs() - request_started_ms;
+    if (elapsed >= config::EDGE_TIMEOUT_MS) {
+        return false;
+    }
+    const int remaining = static_cast<int>(config::EDGE_TIMEOUT_MS - elapsed);
+    esp_http_client_set_timeout_ms(http, std::max(remaining, kMinOpTimeoutMs));
+    return true;
+}
+
+int EdgeWorker::readBody(char* dst, size_t cap, size_t& got)
+{
+    // 応答本文を kReadChunk ずつ読み、合間に期限と終了要求を見る。戻り値は 0 (読み切った) か kErr*。
+    got = 0;
+    while (got < cap) {
+        if (quit.load() && !sending_cancel) {
+            return kErrAborted;
+        }
+        if (!armDeadline()) {
+            return kErrTimeout;
+        }
+        const int want = static_cast<int>(std::min(cap - got, kReadChunk));
+        const int n    = esp_http_client_read(http, dst + got, want);
+        if (n == -ESP_ERR_HTTP_EAGAIN) {
+            continue;  // この読み出しの待ちが切れた。期限は次の armDeadline() で判定する
+        }
+        if (n < 0) {
+            return kErrLost;
+        }
+        if (n == 0) {
+            break;  // 読み切った、または相手が閉じた
+        }
+        got += static_cast<size_t>(n);
+    }
+    if (esp_http_client_is_complete_data_received(http)) {
+        return 0;
+    }
+    return got >= cap ? kErrBodyTooLarge : kErrLost;
 }
 
 void EdgeWorker::noteResponse(const char* op, const Reply& r)
