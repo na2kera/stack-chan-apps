@@ -168,6 +168,132 @@ bool wifiUp()
 
 }  // namespace
 
+namespace {
+
+// リクエストの絶対期限の番人。プロセスの寿命を持つ 1 個だけ (worker には持たせない)。
+//
+// 期限 (EDGE_TIMEOUT_MS) に達したら、esp_timer のコールバックがソケットを shutdown() して、
+// esp_http_client の中でブロックしている select / recv / send を失敗で戻らせる
+// (open() や fetch_headers() は内部でループし、1 回の送受信ごとにタイムアウトを数え直すので、
+//  少しずつバイトを送ってくる相手だと armDeadline() だけでは期限を越えて待ち続ける)。
+//
+// 寿命: esp_timer_stop() / esp_timer_delete() は、もう dispatch されたコールバックの終了を待たない。
+// 番人を worker に持たせると、コールバックが走る (mutex を取ろうとする) 最中に worker が解放されうる。
+// そこで mutex・状態・タイマーをすべて静的な寿命にし、タイマーは最初の 1 回だけ作って削除しない。
+// コールバックは worker を一切参照しない。
+//
+// ロックの順序: m は末端のロック。持ったまま EdgeWorker::mutex (mailbox) を取らない。
+// fd を閉じる前に必ず watchdogDisarm() するので、コールバックが再利用された fd を shutdown することは無い。
+struct RequestWatchdog {
+    std::mutex m;
+    int fd              = -1;     // 今のリクエストが使っているソケット (接続前は -1)
+    bool armed          = false;  // リクエストの最中
+    bool fired          = false;  // 期限に達した (disarm が受け取る)
+    uint32_t owner      = 0;      // 掛けたリクエストの合い札 (0 = 無し)
+    uint32_t last_token = 0;
+    int64_t deadline_us = 0;      // esp_timer_get_time() での期限。これより前に走ったコールバックは無視する
+    esp_timer_handle_t timer = nullptr;  // 最初の arm で作り、削除しない
+};
+
+RequestWatchdog& watchdog()
+{
+    static RequestWatchdog w;
+    return w;
+}
+
+void watchdogCallback(void*)
+{
+    // esp_timer タスク。close() はしない (fd の持ち主は esp_http_client)。shutdown() だけして、
+    // net タスクのブロックしている送受信をエラーで戻らせる。lwIP のソケットは別タスクから呼んでよい。
+    auto& w = watchdog();
+    std::lock_guard<std::mutex> lock(w.m);
+    if (!w.armed || esp_timer_get_time() < w.deadline_us) {
+        return;  // もう終わっている、または前のリクエストの分が遅れて走った
+    }
+    w.fired = true;
+    if (w.fd >= 0) {
+        shutdown(w.fd, SHUT_RDWR);
+    }
+}
+
+// 絶対期限で番人を掛ける。戻り値は合い札 (0 = 掛けられなかった。そのリクエストは armDeadline() だけで縛る)。
+uint32_t watchdogArm(int fd)
+{
+    auto& w = watchdog();
+    // タイマーの start / stop も m の中でする (止める側と掛ける側が別の worker でも順序が入れ替わらない)。
+    // どちらも待たない呼び出しで、コールバックの終了は待たない。
+    std::lock_guard<std::mutex> lock(w.m);
+    uint32_t token;
+    {
+        if (w.timer == nullptr) {
+            esp_timer_create_args_t args = {};
+            args.callback                = &watchdogCallback;
+            args.arg                     = nullptr;
+            args.dispatch_method         = ESP_TIMER_TASK;
+            args.name                    = "pb_edge_dl";
+            if (esp_timer_create(&args, &w.timer) != ESP_OK) {
+                w.timer = nullptr;
+                mclog::tagError(kTag, "watchdog timer create failed");
+                return 0;
+            }
+        }
+        if (w.armed) {
+            // 生きている worker は 1 つだけ (切り離し中は begin() を断る) なので、ここには来ないはず。
+            mclog::tagError(kTag, "watchdog already armed by another request (owner {}); not arming", w.owner);
+            return 0;
+        }
+        if (++w.last_token == 0) ++w.last_token;
+        token         = w.last_token;
+        w.owner       = token;
+        w.armed       = true;
+        w.fired       = false;
+        w.fd          = fd;
+        w.deadline_us = esp_timer_get_time() + static_cast<int64_t>(config::EDGE_TIMEOUT_MS) * 1000;
+    }
+    esp_timer_stop(w.timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
+    esp_timer_start_once(w.timer, static_cast<uint64_t>(config::EDGE_TIMEOUT_MS) * 1000);
+    return token;
+}
+
+// 接続できた後に fd を教える。接続の間に期限が来ていたら false (コールバックは fd を知らず何も
+// できなかったので、呼び出し側がタイムアウトとして打ち切る)。
+bool watchdogSetFd(uint32_t token, int fd)
+{
+    if (token == 0) {
+        return true;  // 番人なし
+    }
+    auto& w = watchdog();
+    std::lock_guard<std::mutex> lock(w.m);
+    if (w.owner != token || !w.armed) {
+        return true;
+    }
+    if (w.fired) {
+        return false;
+    }
+    w.fd = fd;
+    return true;
+}
+
+// 番人を止める。自分 (token) が掛けたものだけ止めるので、切り離されて残った worker が、新しい worker の
+// リクエストの番人を止めることは無い。戻り値は、このリクエストで期限に達していたか。
+bool watchdogDisarm(uint32_t token)
+{
+    auto& w = watchdog();
+    std::lock_guard<std::mutex> lock(w.m);
+    if (token == 0 || w.owner != token) {
+        return false;
+    }
+    const bool fired = w.fired;
+    w.armed          = false;
+    w.fired          = false;
+    w.fd             = -1;
+    w.owner          = 0;
+    esp_timer_stop(w.timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
+    return fired;
+}
+
+}  // namespace
+
 // net タスクと HttpEdgeClient が共有する状態。両方が shared_ptr で持ち、最後に手放した側が解放する。
 // end() がタスクを待ちきれずに切り離しても、タスクが終わるときにここで後始末される。
 struct EdgeWorker {
@@ -241,10 +367,7 @@ struct EdgeWorker {
     bool armDeadline();
     Reply exchangeGuarded(const Request& rq);
     void armWatchdog();
-    bool watchdogSetFd(int fd);
     void disarmWatchdog();
-    bool watchdogFired();
-    static void onDeadline(void* arg);
     enum class ReadStep : uint8_t { Data, End, Again, Error };
     ReadStep readSome(char* dst, size_t want, size_t& n, int& err);
     int readBody(char* dst, size_t cap, size_t& got);
@@ -294,25 +417,13 @@ struct EdgeWorker {
     std::atomic<bool> ever_ok{false};
     std::atomic<uint8_t> failures{0};  // 連続失敗回数
 
-    // ---- 期限の番人 (wd_mutex で守る。net タスクと esp_timer タスクが触る) ----
-    // リクエスト全体の期限 (EDGE_TIMEOUT_MS) に達したら、esp_timer のコールバックがソケットを
-    // shutdown() して、esp_http_client の中でブロックしている select / recv / send を失敗で戻らせる
-    // (open() や fetch_headers() は内部でループし、1 回の送受信ごとにタイムアウトを数え直すので、
-    //  少しずつバイトを送ってくる相手だと armDeadline() だけでは期限を越えて待ち続ける)。
-    // ロックの順序: wd_mutex は末端のロック。持ったまま mutex (mailbox) を取らない。コールバックは
-    // wd_mutex だけを取る。fd を閉じる (closeConnection / dropHttp) 前に必ず disarmWatchdog() で
-    // armed=false にするので、コールバックが再利用された fd を shutdown することは無い。
-    std::mutex wd_mutex;
-    esp_timer_handle_t wd_timer = nullptr;
-    int wd_fd                   = -1;     // 今のリクエストが使っているソケット (接続前は -1)
-    bool wd_armed               = false;  // リクエストの最中
-    bool wd_fired               = false;  // 期限に達した (exchange() が受け取るまで残る)
-
     // ---- net タスクだけが触る ----
     esp_http_client_handle_t http = nullptr;
     bool http_open                = false;  // TCP 接続を持っている (と思っている)
     bool sending_cancel           = false;  // 終了要求の後でも送ってよいリクエスト (session_cancel) の最中
     uint32_t request_started_ms   = 0;      // 今のリクエストの期限の起点 (exchange の中だけで使う)
+    uint32_t wd_token             = 0;      // 期限の番人 (RequestWatchdog) を掛けたときの合い札。0 = 掛けていない
+    bool wd_request_fired         = false;  // 今のリクエストで番人が発火した
     char json[kMaxJsonBody + 1]   = {};     // 直近の応答本文
     size_t json_len               = 0;
     int send_idx                  = 1;
@@ -720,15 +831,7 @@ bool EdgeWorker::allocate()
     for (auto& s : slot) {
         s = static_cast<uint8_t*>(heap_caps_malloc(kSlotBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     }
-    esp_timer_create_args_t args = {};
-    args.callback                = &EdgeWorker::onDeadline;
-    args.arg                     = this;
-    args.dispatch_method         = ESP_TIMER_TASK;
-    args.name                    = "pb_edge_dl";
-    if (esp_timer_create(&args, &wd_timer) != ESP_OK) {
-        wd_timer = nullptr;
-    }
-    return wake != nullptr && queue != nullptr && slot[0] != nullptr && slot[1] != nullptr && wd_timer != nullptr;
+    return wake != nullptr && queue != nullptr && slot[0] != nullptr && slot[1] != nullptr;
 }
 
 EdgeWorker::~EdgeWorker()
@@ -736,11 +839,6 @@ EdgeWorker::~EdgeWorker()
     // 最後の shared_ptr を手放した側 (通常は end()、切り離し時は net タスク) で走る。
     // この時点で net タスクは run() を抜けているので、http はもう使われていない。
     dropHttp();  // 先に disarmWatchdog() する
-    if (wd_timer != nullptr) {
-        esp_timer_stop(wd_timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
-        esp_timer_delete(wd_timer);
-        wd_timer = nullptr;
-    }
     for (auto& s : slot) {
         if (s != nullptr) {
             heap_caps_free(s);
@@ -1383,7 +1481,8 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     Reply r = exchangeGuarded(rq);
     // どの経路で終わっても番人を止める (閉じる経路では closeConnection / dropHttp が先に止めている)。
     disarmWatchdog();
-    if (watchdogFired()) {
+    if (wd_request_fired) {
+        wd_request_fired = false;
         // 期限でソケットを shutdown した。応答が読めていても信用せず、タイムアウトとして捨てる。
         dropHttp();
         if (r.status != kErrAborted) {
@@ -1399,65 +1498,22 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     return r;
 }
 
-void EdgeWorker::onDeadline(void* arg)
-{
-    // esp_timer タスク。close() はしない (fd の持ち主は esp_http_client)。shutdown() だけして、
-    // net タスクのブロックしている送受信をエラーで戻らせる。lwIP のソケットは別タスクから呼んでよい。
-    auto* w = static_cast<EdgeWorker*>(arg);
-    std::lock_guard<std::mutex> lock(w->wd_mutex);
-    if (!w->wd_armed) {
-        return;  // もうリクエストは終わっている
-    }
-    w->wd_fired = true;
-    if (w->wd_fd >= 0) {
-        shutdown(w->wd_fd, SHUT_RDWR);
-    }
-}
-
 void EdgeWorker::armWatchdog()
 {
-    {
-        std::lock_guard<std::mutex> lock(wd_mutex);
-        wd_armed = true;
-        wd_fired = false;
-        // keep-alive の接続を使い回すなら、送る前から fd が分かっている。
-        wd_fd = http_open && http != nullptr ? esp_http_client_get_socket(http) : -1;
-    }
-    esp_timer_stop(wd_timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
-    esp_timer_start_once(wd_timer, static_cast<uint64_t>(config::EDGE_TIMEOUT_MS) * 1000);
-}
-
-bool EdgeWorker::watchdogSetFd(int fd)
-{
-    // 接続できた後に fd を教える。接続の間に期限が来ていたら false (コールバックは fd を知らず何も
-    // できなかったので、呼び出し側がタイムアウトとして打ち切る)。
-    std::lock_guard<std::mutex> lock(wd_mutex);
-    if (wd_fired) {
-        return false;
-    }
-    wd_fd = fd;
-    return true;
+    // keep-alive の接続を使い回すなら、送る前から fd が分かっている。
+    wd_request_fired = false;
+    wd_token         = watchdogArm(http_open && http != nullptr ? esp_http_client_get_socket(http) : -1);
 }
 
 void EdgeWorker::disarmWatchdog()
 {
-    {
-        std::lock_guard<std::mutex> lock(wd_mutex);
-        wd_armed = false;  // wd_fired は残す (exchange() が watchdogFired() で受け取る)
-        wd_fd    = -1;
+    // fd を閉じる前 (closeConnection / dropHttp) と、リクエストの終わり (exchange) に呼ぶ。何度呼んでもよい。
+    if (wd_token != 0) {
+        if (watchdogDisarm(wd_token)) {
+            wd_request_fired = true;
+        }
+        wd_token = 0;
     }
-    if (wd_timer != nullptr) {
-        esp_timer_stop(wd_timer);  // 動いていなければ ESP_ERR_INVALID_STATE (無視)
-    }
-}
-
-bool EdgeWorker::watchdogFired()
-{
-    // 1 回だけ返す (番人を掛けずに終わる次のリクエストに持ち越さない)。
-    std::lock_guard<std::mutex> lock(wd_mutex);
-    const bool fired = wd_fired;
-    wd_fired         = false;
-    return fired;
 }
 
 EdgeWorker::Reply EdgeWorker::exchangeGuarded(const Request& rq)
@@ -1524,7 +1580,7 @@ EdgeWorker::Reply EdgeWorker::exchangeGuarded(const Request& rq)
         return r;
     }
     http_open = true;
-    if (!watchdogSetFd(esp_http_client_get_socket(http))) {
+    if (!watchdogSetFd(wd_token, esp_http_client_get_socket(http))) {
         return fail(kErrTimeout);
     }
     if (!was_open) {
