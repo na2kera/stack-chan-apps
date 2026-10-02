@@ -52,7 +52,7 @@ public:
     void requestCandidate(const Session&) override
     {
     }
-    bool pollCandidate(bool&, std::vector<uint8_t>&) override
+    bool pollCandidate(bool&, JpegBytes&) override
     {
         return false;
     }

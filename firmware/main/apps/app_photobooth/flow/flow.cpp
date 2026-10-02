@@ -706,7 +706,7 @@ void Flow::updateReview(const hw::Event& ev, uint32_t now_ms)
     }
     if (review_wait_ == ReviewWait::Candidate) {
         bool ok = false;
-        std::vector<uint8_t> jpeg;
+        net::JpegBytes jpeg;
         const bool done = edge_.pollCandidate(ok, jpeg);
         if (!done && now_ms - review_wait_since_ms_ < kCandidateGuardMs) {
             return;

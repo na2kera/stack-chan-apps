@@ -55,7 +55,7 @@ public:
     void sessionTimeout(const Session& s) override;
     bool pollTimeout(bool& ok, bool& has_candidate) override;
     void requestCandidate(const Session& s) override;
-    bool pollCandidate(bool& ok, std::vector<uint8_t>& jpeg) override;
+    bool pollCandidate(bool& ok, JpegBytes& jpeg) override;
     void reviewDecision(const Session& s, bool save) override;
     bool pollPhotoReady(PhotoInfo& out) override;
     void sessionCancel(const Session& s) override;

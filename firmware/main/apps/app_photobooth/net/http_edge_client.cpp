@@ -68,6 +68,7 @@ constexpr uint32_t kPhotoPollIntervalMs = 500;
 constexpr uint32_t kSaveRetryDelayMs    = 300;
 constexpr size_t kMaxJsonBody           = 2048;        // frame_result / photo は 1 KB 未満
 constexpr size_t kMaxCandidateBytes     = 256 * 1024;  // QVGA 品質 80 の JPEG は数十 KB
+constexpr size_t kBinaryInitialBytes    = 16 * 1024;   // 長さ不明 (chunked) の候補 JPEG を読み始める大きさ
 constexpr uint32_t kCandidateWaitMarginMs = 500;
 constexpr uint32_t kStatsIntervalMs     = 5000;
 constexpr uint32_t kIdleWaitMs          = 20;
@@ -208,7 +209,7 @@ struct EdgeWorker {
         const uint8_t* body             = nullptr;
         size_t body_len                 = 0;
         const Header* frame_headers     = nullptr;  // frame のときだけ (kFrameHeaders と同じ並び)
-        std::vector<uint8_t>* binary_out = nullptr;  // 200 の本文をここへ (候補 JPEG)
+        JpegBytes* binary_out = nullptr;  // 200 の本文をここへ (候補 JPEG)
     };
 
     ~EdgeWorker();
@@ -230,7 +231,7 @@ struct EdgeWorker {
     void sendHello();
     void pollPhoto(uint32_t now);
     void publishPhoto(uint32_t gen, const PhotoInfo& info);
-    void fetchCandidate(const char* sid, bool& ok, std::vector<uint8_t>& jpeg);
+    void fetchCandidate(const char* sid, bool& ok, JpegBytes& jpeg);
     // JSON / 空本文のリクエスト。応答本文は json (NUL 終端、json_len バイト) に入る。
     // retry_transport なら通信失敗 (status < 0) のとき接続を作り直して 1 回だけ送り直す
     // (keep-alive の接続が edge 側で閉じられていた場合の対策。冪等なリクエストだけ)。
@@ -239,7 +240,10 @@ struct EdgeWorker {
     Reply exchange(const Request& rq);
     bool ensureHttp();
     bool armDeadline();
+    enum class ReadStep : uint8_t { Data, End, Again, Error };
+    ReadStep readSome(char* dst, size_t want, size_t& n, int& err);
     int readBody(char* dst, size_t cap, size_t& got);
+    int readBinary(JpegBytes& out, int64_t content_len);
     void closeConnection();
     void dropHttp();
     void dropIfPeerClosed();
@@ -277,7 +281,7 @@ struct EdgeWorker {
     uint32_t cand_wanted_seq = 0;  // Flow が待っている依頼番号 (0 = 待っていない)
     uint32_t cand_done_seq   = 0;
     bool cand_ok             = false;
-    std::vector<uint8_t> cand_jpeg;
+    JpegBytes cand_jpeg;
     char last_error[96] = {};
 
     // ---- net タスクと Flow の両方から読む ----
@@ -560,7 +564,7 @@ void HttpEdgeClient::requestCandidate(const Session& s)
     }
 }
 
-bool HttpEdgeClient::pollCandidate(bool& ok, std::vector<uint8_t>& jpeg)
+bool HttpEdgeClient::pollCandidate(bool& ok, JpegBytes& jpeg)
 {
     if (!cand_waiting_) {
         return false;
@@ -992,7 +996,7 @@ void EdgeWorker::handleCommand(const Command& c)
 
         case CmdKind::Candidate: {
             bool ok = false;
-            std::vector<uint8_t> jpeg;
+            JpegBytes jpeg;
             fetchCandidate(c.sid, ok, jpeg);
             std::lock_guard<std::mutex> lock(mutex);
             if (c.seq == cand_wanted_seq) {
@@ -1217,7 +1221,7 @@ void EdgeWorker::sendFrame(const FrameMeta& meta)
     }
 }
 
-void EdgeWorker::fetchCandidate(const char* sid, bool& ok, std::vector<uint8_t>& jpeg)
+void EdgeWorker::fetchCandidate(const char* sid, bool& ok, JpegBytes& jpeg)
 {
     ok = false;
     char path[96];
@@ -1434,24 +1438,14 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     const int status = esp_http_client_get_status_code(http);
 
     if (rq.binary_out != nullptr && status == 200) {
-        // 候補 JPEG。Content-Length が必要 (edge は付ける)。
-        if (content_len <= 0 || static_cast<size_t>(content_len) > kMaxCandidateBytes) {
-            return fail(kErrBodyTooLarge);
-        }
-        const size_t want = static_cast<size_t>(content_len);
-        try {
-            rq.binary_out->resize(want);  // 512 B を超える確保は PSRAM に行く (CONFIG_SPIRAM_USE_MALLOC)
-        } catch (const std::bad_alloc&) {
-            mclog::tagError(kTag, "candidate alloc failed ({} bytes)", want);
-            return fail(kErrInternal);
-        }
-        size_t got   = 0;
-        const int rc = readBody(reinterpret_cast<char*>(rq.binary_out->data()), want, got);
-        if (rc != 0 || got != want) {
+        // 候補 JPEG。長さが分かっていれば先に上限を見る。chunked (長さ不明) なら読みながら見る。
+        const int rc = readBinary(*rq.binary_out, content_len);
+        if (rc != 0) {
             rq.binary_out->clear();
-            return fail(rc != 0 ? rc : kErrLost);
+            return fail(rc);
         }
     } else {
+        // JSON。長さが分かっていれば先に上限を見る。chunked なら readBody() が読みながら見る。
         if (content_len > static_cast<int64_t>(kMaxJsonBody)) {
             return fail(kErrBodyTooLarge);
         }
@@ -1490,34 +1484,91 @@ bool EdgeWorker::armDeadline()
     return true;
 }
 
+EdgeWorker::ReadStep EdgeWorker::readSome(char* dst, size_t want, size_t& n, int& err)
+{
+    // 応答本文を 1 回 (最大 kReadChunk) 読む。前に期限と終了要求を見る。
+    n = 0;
+    if (quit.load() && !sending_cancel) {
+        err = kErrAborted;
+        return ReadStep::Error;
+    }
+    if (!armDeadline()) {
+        err = kErrTimeout;
+        return ReadStep::Error;
+    }
+    const int r = esp_http_client_read(http, dst, static_cast<int>(std::min(want, kReadChunk)));
+    if (r == -ESP_ERR_HTTP_EAGAIN) {
+        return ReadStep::Again;  // この読み出しの待ちが切れた。期限は次の armDeadline() で判定する
+    }
+    if (r < 0) {
+        err = kErrLost;
+        return ReadStep::Error;
+    }
+    if (r == 0) {
+        return ReadStep::End;  // 読み切った、または相手が閉じた
+    }
+    n = static_cast<size_t>(r);
+    return ReadStep::Data;
+}
+
 int EdgeWorker::readBody(char* dst, size_t cap, size_t& got)
 {
-    // 応答本文を kReadChunk ずつ読み、合間に期限と終了要求を見る。戻り値は 0 (読み切った) か kErr*。
+    // 固定の領域 (cap バイト) に読む。Content-Length の無い chunked 応答でも、cap を超えた時点で
+    // kErrBodyTooLarge にする (cap ちょうどで終わる応答は通す)。戻り値は 0 (読み切った) か kErr*。
     got = 0;
-    while (got < cap) {
-        if (quit.load() && !sending_cancel) {
-            return kErrAborted;
-        }
-        if (!armDeadline()) {
-            return kErrTimeout;
-        }
-        const int want = static_cast<int>(std::min(cap - got, kReadChunk));
-        const int n    = esp_http_client_read(http, dst + got, want);
-        if (n == -ESP_ERR_HTTP_EAGAIN) {
-            continue;  // この読み出しの待ちが切れた。期限は次の armDeadline() で判定する
-        }
-        if (n < 0) {
-            return kErrLost;
-        }
-        if (n == 0) {
-            break;  // 読み切った、または相手が閉じた
-        }
-        got += static_cast<size_t>(n);
+    for (;;) {
+        char extra;  // cap まで読んだ後、まだ続きがあるかを確かめる 1 バイト
+        const bool full = got >= cap;
+        size_t n        = 0;
+        int err         = 0;
+        const ReadStep step = full ? readSome(&extra, 1, n, err) : readSome(dst + got, cap - got, n, err);
+        if (step == ReadStep::Again) continue;
+        if (step == ReadStep::Error) return err;
+        if (step == ReadStep::End) break;
+        if (full) return kErrBodyTooLarge;
+        got += n;
     }
-    if (esp_http_client_is_complete_data_received(http)) {
-        return 0;
+    return esp_http_client_is_complete_data_received(http) ? 0 : kErrLost;
+}
+
+int EdgeWorker::readBinary(JpegBytes& out, int64_t content_len)
+{
+    // PSRAM のバッファに読む。content_len > 0 ならその大きさで 1 回だけ確保する。
+    // 0 (chunked / 長さ不明) なら kBinaryInitialBytes から倍々に伸ばし、合計が kMaxCandidateBytes を
+    // 超えた時点で kErrBodyTooLarge にする。
+    if (content_len > static_cast<int64_t>(kMaxCandidateBytes)) {
+        return kErrBodyTooLarge;
     }
-    return got >= cap ? kErrBodyTooLarge : kErrLost;
+    const bool known = content_len > 0;
+    size_t got       = 0;
+    try {
+        out.resize(known ? static_cast<size_t>(content_len) : kBinaryInitialBytes);
+        for (;;) {
+            if (got >= out.size() && !known && out.size() < kMaxCandidateBytes) {
+                out.resize(std::min(out.size() * 2, kMaxCandidateBytes));
+            }
+            char extra;  // 上限 (または宣言された長さ) まで読んだ後、まだ続きがあるかを確かめる 1 バイト
+            const bool full = got >= out.size();
+            size_t n        = 0;
+            int err         = 0;
+            const ReadStep step = full ? readSome(&extra, 1, n, err)
+                                       : readSome(reinterpret_cast<char*>(out.data()) + got, out.size() - got, n, err);
+            if (step == ReadStep::Again) continue;
+            if (step == ReadStep::Error) return err;
+            if (step == ReadStep::End) break;
+            if (full) return kErrBodyTooLarge;
+            got += n;
+        }
+        out.resize(got);
+    } catch (const std::bad_alloc&) {
+        mclog::tagError(kTag, "candidate alloc failed (free PSRAM {})", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        return kErrInternal;
+    }
+    if (got == 0 || (known && got != static_cast<size_t>(content_len)) ||
+        !esp_http_client_is_complete_data_received(http)) {
+        return kErrLost;
+    }
+    return 0;
 }
 
 void EdgeWorker::noteResponse(const char* op, const Reply& r)
