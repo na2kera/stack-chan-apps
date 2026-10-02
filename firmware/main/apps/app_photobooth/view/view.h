@@ -74,7 +74,7 @@ public:
     // 出せなかったら false (ボタン 0 =「撮り直す」)。
     bool showReview(const char* title, const uint16_t* pixels, int width, int height);
     // REVIEW: edge の候補 JPEG を全面に出し、タイトル帯と「保存する」「撮り直す」を重ねる。
-    // デコードできなければ画面を変えずに false。
+    // ヘッダの大きさが 320x240 でない、またはデコードできなければ、画面を変えずに false。
     bool showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len);
     // REVIEW: 候補なし。text (「顔が見つからなかったよ」など) と「撮り直す」だけ。
     void showReviewEmpty(const char* title, const char* text);
