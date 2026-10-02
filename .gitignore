@@ -26,4 +26,17 @@ gallery/config.toml
 # runtime data
 gallery/storage/
 edge/tmp/
+
+# firmware (純正ファーム) の取得物・生成物
+firmware/components/
+firmware/xiaozhi-esp32/
+firmware/managed_components/
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+
+# MediaPipe モデル (edge/tools/download_model.py で取得)
 edge/models/
+
+# app_photobooth のローカル設定 (鍵)
+firmware/main/apps/app_photobooth/config_local.h
