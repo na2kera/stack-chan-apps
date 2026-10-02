@@ -82,7 +82,10 @@ public:
     template <class T, class... Args>
     T& add(Args&&... args)
     {
-        auto obj = std::make_unique<T>(std::forward<Args>(args)...);
+        // 実際の型 T のまま破棄する (make_shared が T のデストラクタを直接呼ぶ)。
+        // lvgl_cpp::Object は仮想デストラクタを持たず、Widget 側で vptr が足されるため、
+        // Object* 経由で delete すると先頭アドレスがずれてヒープを壊す。
+        auto obj = std::make_shared<T>(std::forward<Args>(args)...);
         T& ref   = *obj;
         objs_.push_back(std::move(obj));
         return ref;
@@ -90,7 +93,7 @@ public:
 
 private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> root_;
-    std::vector<std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Object>> objs_;
+    std::vector<std::shared_ptr<void>> objs_;
 };
 
 // 枠線・余白・スクロール・クリックを持たない矩形。
