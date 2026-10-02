@@ -25,6 +25,8 @@ public:
         Announce,  // 「写真を撮るよ！ いい顔をしてね」
         Captured,  // 「撮れたよ」(シャッター音代わり)
         Closer,    // 「もう少し寄ってね」(顔判定が入るステップ2以降で使う)
+        Shutter,   // 合成のシャッター音 (カシャッ、240 ms。自動採用の直後に captured.wav の前に鳴らす)
+        Count,     // 個数 (clips_ の大きさ)
     };
 
     // PCM の位置 (埋め込みデータを指すだけ)。
@@ -49,7 +51,7 @@ public:
 private:
     static Pcm parseWav(const uint8_t* start, const uint8_t* end, const char* name);
 
-    Pcm clips_[3];
+    Pcm clips_[static_cast<int>(Clip::Count)];
     // タスクと共有する状態。タスクも shared_ptr を持つので、Audio が先に消えても安全。
     std::shared_ptr<AudioWorker> worker_;
 };

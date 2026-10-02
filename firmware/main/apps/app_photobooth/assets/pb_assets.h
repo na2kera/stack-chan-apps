@@ -24,3 +24,5 @@ extern const uint8_t pb_voice_captured_start[] asm("_binary_captured_wav_start")
 extern const uint8_t pb_voice_captured_end[] asm("_binary_captured_wav_end");
 extern const uint8_t pb_voice_closer_start[] asm("_binary_closer_wav_start");
 extern const uint8_t pb_voice_closer_end[] asm("_binary_closer_wav_end");
+extern const uint8_t pb_voice_shutter_start[] asm("_binary_shutter_wav_start");  // tools/make_shutter.py で生成
+extern const uint8_t pb_voice_shutter_end[] asm("_binary_shutter_wav_end");

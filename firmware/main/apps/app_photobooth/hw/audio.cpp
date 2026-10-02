@@ -132,6 +132,7 @@ bool Audio::begin()
     clips_[static_cast<int>(Clip::Announce)] = parseWav(pb_voice_announce_start, pb_voice_announce_end, "announce");
     clips_[static_cast<int>(Clip::Captured)] = parseWav(pb_voice_captured_start, pb_voice_captured_end, "captured");
     clips_[static_cast<int>(Clip::Closer)]   = parseWav(pb_voice_closer_start, pb_voice_closer_end, "closer");
+    clips_[static_cast<int>(Clip::Shutter)]  = parseWav(pb_voice_shutter_start, pb_voice_shutter_end, "shutter");
 
     {
         auto old = g_detached.lock();
