@@ -14,7 +14,7 @@
 //   - begin() / end() を持つ (アプリを開いている間だけタスクと PSRAM を使う)。
 //   - 候補 JPEG は同期の fetchCandidate() ではなく requestCandidate() / pollCandidate() の非同期
 //     (Mooncake のループを最大 3 秒止めないため)。
-//   - 待機画面の 3 状態表示のために linkState() を持つ。
+//   - 待機画面の接続表示のために linkState() を持つ。
 #pragma once
 
 #include <cstddef>
@@ -34,9 +34,8 @@ enum class Phase : uint8_t { Compose, Capture };
 
 // 待機画面に出す接続状態。
 enum class LinkState : uint8_t {
-    Offline,         // 「PC未接続」(edge 無効ビルドもこれ)
-    WifiConnecting,  // 「Wi-Fi接続中」(純正の startNetwork が接続を待っている)
-    Online,          // 「PC接続中」
+    Offline,  // 「PC未接続」(edge 無効ビルドもこれ)
+    Online,   // 「PC接続中」
 };
 
 // frame_result (spec §8, protocol.md)。
@@ -71,7 +70,7 @@ struct PhotoInfo {
 
 // 診断画面 (DIAG) に出す接続状態。鍵は含めない。
 struct Diagnostics {
-    enum class Wifi : uint8_t { NotConfigured, Disconnected, Connecting, ConfigMode, Connected };
+    enum class Wifi : uint8_t { NotConfigured, Disconnected, ConfigMode, Connected };
     bool enabled = false;  // edge 通信ありのビルドか (NullEdge は false)
     Wifi wifi    = Wifi::Disconnected;
     bool online  = false;  // edge から直近に 2xx を受けている
@@ -87,7 +86,7 @@ class EdgeClient {
 public:
     virtual ~EdgeClient() = default;
 
-    // 通信を始める (Wi-Fi の起動依頼、net タスクの起動)。失敗しても撮影は判定なしで続けられる。
+    // 通信を始める (net タスクの起動)。Wi-Fi の接続は含まない。失敗しても撮影は判定なしで続けられる。
     virtual bool begin() = 0;
     // 通信を止める。Wi-Fi は切断しない (純正の他のアプリが使う)。
     virtual void end() = 0;
@@ -131,7 +130,7 @@ public:
     // 診断画面用。最後の通信エラーの短い説明 (鍵・URL は含めない)。無ければ ""。
     virtual const char* lastError()           = 0;
     virtual void diagnostics(Diagnostics& out) = 0;
-    // 接続を捨てて、すぐ hello する (診断画面の「再接続」)。Wi-Fi が未起動なら起動を依頼する。
+    // edge との接続を捨てて、すぐ hello する (診断画面の「再接続」)。Wi-Fi には触らない。
     virtual void reconnect() = 0;
 };
 

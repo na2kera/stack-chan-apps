@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
 class LvglAllocatedImage;  // 純正の JPEG デコード結果 (display/lvgl_display/lvgl_image.h)
 
@@ -27,9 +28,8 @@ class Page;
 
 // 待機画面の右下に出す接続状態。
 enum class IdleLink : uint8_t {
-    Offline,         // 「PC未接続」
-    WifiConnecting,  // 「Wi-Fi接続中」
-    Online,          // 「PC接続中」
+    Offline,  // 「PC未接続」
+    Online,   // 「PC接続中」
 };
 
 class View {
@@ -48,8 +48,12 @@ public:
         return screen_id_;
     }
 
+    // アプリを開いた直後: 「Wi-Fi接続中」。純正の startNetwork() が繋がるまでの間だけ出す (ボタンなし)。
+    void showWifiConnecting();
+    // その画面の進み具合の 1 行 (純正の onLog の文言) を差し替える。Wi-Fi のイベントタスクから呼ばれる。
+    void setWifiMessage(std::string_view text);
     // 待機: 案内文 + 「タッチで開始」+「終了」。画面のどこを触っても開始 (ボタン以外)。
-    // 右下に接続状態 (「PC接続中」/「PC未接続」/「Wi-Fi接続中」)、warning があれば左下に警告を出す。
+    // 右下に接続状態 (「PC接続中」/「PC未接続」)、warning があれば左下に警告を出す。
     void showIdle(IdleLink link, const char* warning);
     // 右下の接続状態だけを差し替える。
     void updateIdleStatus(IdleLink link);
@@ -108,6 +112,7 @@ private:
     lv_obj_t* band_panel_     = nullptr;  // COMPOSE / CAPTURE の案内帯
     lv_obj_t* band_label_     = nullptr;
     lv_obj_t* label_diag_     = nullptr;  // DIAG の本文
+    lv_obj_t* label_wifi_     = nullptr;  // 「Wi-Fi接続中」画面の進み具合
     // REVIEW に出している候補 JPEG のデコード結果。lv_image が参照するので、画面を作り直すまで持つ。
     std::shared_ptr<LvglAllocatedImage> review_image_;
 };

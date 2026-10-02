@@ -159,6 +159,11 @@ bool isSuccess(int status)
     return status >= 200 && status < 300;
 }
 
+bool wifiUp()
+{
+    return Network::status() == Network::Status::Connected;
+}
+
 }  // namespace
 
 // net タスクと HttpEdgeClient が共有する状態。両方が shared_ptr で持ち、最後に手放した側が解放する。
@@ -342,9 +347,6 @@ bool HttpEdgeClient::begin()
     if (worker_) {
         return true;
     }
-    // 接続は純正の startNetwork() に任せる (別タスク。ここではブロックしない)。
-    Network::ensureStarted();
-
     if (busy()) {
         // 前の net タスクがまだ通信の途中 (タイムアウト待ち)。二重に回さない。
         mclog::tagError(kTag, "previous net task is still running; edge disabled until reconnect");
@@ -397,15 +399,12 @@ void HttpEdgeClient::end()
 
 bool HttpEdgeClient::isOnline()
 {
-    return worker_ != nullptr && Network::connected() && worker_->online();
+    return worker_ != nullptr && wifiUp() && worker_->online();
 }
 
 LinkState HttpEdgeClient::linkState()
 {
-    if (isOnline()) {
-        return LinkState::Online;
-    }
-    return Network::status() == Network::Status::Connecting ? LinkState::WifiConnecting : LinkState::Offline;
+    return isOnline() ? LinkState::Online : LinkState::Offline;
 }
 
 void HttpEdgeClient::sessionStart(const Session& s)
@@ -650,9 +649,6 @@ void HttpEdgeClient::diagnostics(Diagnostics& out)
         case Network::Status::Disconnected:
             out.wifi = Diagnostics::Wifi::Disconnected;
             break;
-        case Network::Status::Connecting:
-            out.wifi = Diagnostics::Wifi::Connecting;
-            break;
         case Network::Status::ConfigMode:
             out.wifi = Diagnostics::Wifi::ConfigMode;
             break;
@@ -675,8 +671,8 @@ void HttpEdgeClient::diagnostics(Diagnostics& out)
 
 void HttpEdgeClient::reconnect()
 {
-    // Wi-Fi の再接続そのものは純正 (WifiManager の自動再接続) に任せる。未起動なら起動を依頼する。
-    Network::ensureStarted();
+    // Wi-Fi には触らない: 再接続そのものは純正 (WifiManager の自動再接続) に任せる。Wi-Fi を起動して
+    // いない (アプリを開いたときに未設定だった) 場合は、SETUP で設定してからアプリを開き直す。
     if (!worker_) {
         begin();  // 前のタスクが切り離されたまま (busy) で始められなかったときのやり直し
         return;
@@ -797,7 +793,7 @@ void EdgeWorker::run()
             break;
         }
 
-        const bool wifi_up = Network::connected();
+        const bool wifi_up = wifiUp();
         if (wifi_up != wifi_was_up) {
             wifi_was_up = wifi_up;
             mclog::tagInfo(kTag, "wifi {}", wifi_up ? "up" : "down");
@@ -978,7 +974,7 @@ void EdgeWorker::handleCommand(const Command& c)
             if (poll_active && strcmp(poll_sid, c.sid) == 0) {
                 poll_active = false;
             }
-            if (quit.load() && (failures.load() >= kOfflineAfterFailures || !Network::connected())) {
+            if (quit.load() && (failures.load() >= kOfflineAfterFailures || !wifiUp())) {
                 break;  // 閉じる途中で edge も不通: 待たずに終わる (edge は 5 分で破棄する)
             }
             snprintf(path, sizeof(path), "/v1/sessions/%s/cancel", c.sid);
@@ -1345,7 +1341,7 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
         r.status = kErrAborted;
         return r;
     }
-    if (!Network::connected()) {
+    if (!wifiUp()) {
         r.status = kErrNoWifi;
         return r;
     }

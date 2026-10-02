@@ -34,23 +34,15 @@ constexpr Rect kCaptureBox{kScreenW - 124, 0, 124, 84};
 constexpr Rect kBody{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - kButtonBarH - 8};
 constexpr Rect kBodyNoButtons{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - 8};
 
-// 待機: ボタン帯のすぐ上の 1 行。左に警告、右に接続状態 (「Wi-Fi接続中」が入る幅)。
+// 待機: ボタン帯のすぐ上の 1 行。左に警告、右に接続状態。
 constexpr int32_t kIdleStatusY = kScreenH - kButtonBarH - 26;
-constexpr int32_t kIdleLinkW   = 120;
+constexpr int32_t kIdleLinkW   = 100;
 constexpr Rect kIdleLink{kScreenW - 8 - kIdleLinkW, kIdleStatusY, kIdleLinkW, 24};
 constexpr Rect kIdleWarning{8, kIdleStatusY, kScreenW - 16 - kIdleLinkW - 4, 24};
 
 const char* idleLinkText(IdleLink link)
 {
-    switch (link) {
-        case IdleLink::Online:
-            return str::kPcOnline;
-        case IdleLink::WifiConnecting:
-            return str::kWifiConnecting;
-        case IdleLink::Offline:
-            break;
-    }
-    return str::kPcOffline;
+    return link == IdleLink::Online ? str::kPcOnline : str::kPcOffline;
 }
 
 }  // namespace
@@ -91,6 +83,7 @@ void View::end()
         band_panel_   = nullptr;
         band_label_   = nullptr;
         label_diag_   = nullptr;
+        label_wifi_   = nullptr;
         page_.reset();
         review_image_.reset();  // lv_image を消してから画像を解放する
     }
@@ -128,6 +121,7 @@ void View::newPage()
     band_panel_   = nullptr;
     band_label_   = nullptr;
     label_diag_   = nullptr;
+    label_wifi_   = nullptr;
     page_.reset();
     review_image_.reset();  // 前の画面の lv_image を消してから画像を解放する
     page_ = std::make_unique<Page>(lv_screen_active());
@@ -170,6 +164,26 @@ void View::addBand(const char* text, bool hidden)
     band_label_ = label.get();
     if (hidden) {
         lv_obj_add_flag(band_panel_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void View::showWifiConnecting()
+{
+    LvglLockGuard lock;
+    newPage();
+    titleBar(*page_, str::kWifiConnecting);
+    auto& label = textBox(*page_, page_->root(), kBodyNoButtons, "", font::body(), color::text(), Align::Center);
+    label_wifi_ = label.get();
+}
+
+void View::setWifiMessage(std::string_view text)
+{
+    // 純正の文言 (英語。"WiFi scanning..." など) をそのまま出す。App Center の読み込み画面と同じ。
+    char buf[160];
+    snprintf(buf, sizeof(buf), "%.*s", static_cast<int>(text.size()), text.data());
+    LvglLockGuard lock;
+    if (label_wifi_ != nullptr) {
+        lv_label_set_text(label_wifi_, buf);
     }
 }
 

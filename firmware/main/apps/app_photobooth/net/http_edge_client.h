@@ -42,7 +42,7 @@ public:
     HttpEdgeClient(const HttpEdgeClient&)            = delete;
     HttpEdgeClient& operator=(const HttpEdgeClient&) = delete;
 
-    // Wi-Fi の起動を依頼し、フレームスロット (PSRAM) を確保して net タスクを起動する。
+    // フレームスロット (PSRAM) を確保して net タスクを起動する (Wi-Fi の接続は app_photobooth.cpp が先に済ませる)。
     // 失敗したら false (以後 isOnline() は false のまま。理由は lastError())。
     bool begin() override;
     void end() override;

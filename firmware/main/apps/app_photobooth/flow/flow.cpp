@@ -386,16 +386,13 @@ void Flow::updateIdle(const hw::Event& ev, uint32_t now_ms)
         return;
     }
 
-    // 右下の接続表示 (「PC接続中」/「PC未接続」/「Wi-Fi接続中」)。変わったときだけ差し替える。
+    // 右下の接続表示 (「PC接続中」/「PC未接続」)。変わったときだけ差し替える。
     if (now_ms - idle_link_checked_ms_ >= kIdleLinkPollMs) {
         idle_link_checked_ms_     = now_ms;
         const view::IdleLink link = idleLink();
         if (link != idle_link_drawn_) {
             idle_link_drawn_ = link;
-            mclog::tagInfo(kTag, "idle: edge {}",
-                           link == view::IdleLink::Online
-                               ? "online"
-                               : (link == view::IdleLink::WifiConnecting ? "wifi connecting" : "offline"));
+            mclog::tagInfo(kTag, "idle: edge {}", link == view::IdleLink::Online ? "online" : "offline");
             view_.updateIdleStatus(link);
         }
     }
@@ -403,15 +400,7 @@ void Flow::updateIdle(const hw::Event& ev, uint32_t now_ms)
 
 view::IdleLink Flow::idleLink() const
 {
-    switch (edge_.linkState()) {
-        case net::LinkState::Online:
-            return view::IdleLink::Online;
-        case net::LinkState::WifiConnecting:
-            return view::IdleLink::WifiConnecting;
-        case net::LinkState::Offline:
-            break;
-    }
-    return view::IdleLink::Offline;
+    return edge_.linkState() == net::LinkState::Online ? view::IdleLink::Online : view::IdleLink::Offline;
 }
 
 void Flow::showIdle()
@@ -913,9 +902,6 @@ void Flow::buildDiag(char* out, size_t len)
     switch (d.wifi) {
         case net::Diagnostics::Wifi::Connected:
             wifi = str::kDiagWifiConnected;
-            break;
-        case net::Diagnostics::Wifi::Connecting:
-            wifi = str::kDiagWifiConnecting;
             break;
         case net::Diagnostics::Wifi::ConfigMode:
             wifi = str::kDiagWifiConfigMode;
