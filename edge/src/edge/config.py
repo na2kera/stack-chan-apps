@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,6 +15,7 @@ EDGE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = EDGE_DIR / "config.toml"
 EXAMPLE_CONFIG = EDGE_DIR / "config.example.toml"
 ENV_DEVICE_KEY = "EDGE_DEVICE_KEY"
+ENV_GALLERY_KEY = "GALLERY_KEY"
 
 
 class ConfigError(ValueError):
@@ -73,6 +74,8 @@ class GalleryConfig:
     mode: str = "mock"
     ttl_minutes: float = 60.0
     public_base_url: str = ""
+    url: str = ""
+    key: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -147,10 +150,17 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("[head] x_min/x_max, y_min/y_max are reversed")
     if h.step_max < 0 or h.min_interval_ms < 0 or h.deadband_px < 0:
         raise ConfigError("[head] step_max / min_interval_ms / deadband_px must be >= 0")
-    if cfg.gallery.mode != "mock":
-        raise ConfigError("[gallery] mode: only 'mock' is supported in step 2a")
+    if cfg.gallery.mode not in ("mock", "http"):
+        raise ConfigError("[gallery] mode must be 'mock' or 'http'")
     if cfg.gallery.ttl_minutes <= 0:
         raise ConfigError("[gallery] ttl_minutes must be > 0")
+    if cfg.gallery.mode == "http":
+        if not cfg.gallery.url:
+            raise ConfigError("[gallery] url is required in http mode")
+        # 共有鍵と写真を平文で送らない (spec §7.1)。手元の wrangler dev だけ http を許す。
+        local = cfg.gallery.url.startswith(("http://localhost", "http://127.0.0.1"))
+        if not cfg.gallery.url.startswith("https://") and not local:
+            raise ConfigError("[gallery] url must be https:// in http mode")
 
 
 def parse_config(raw: dict[str, Any], base_dir: Path = EDGE_DIR) -> Config:
@@ -166,7 +176,7 @@ def parse_config(raw: dict[str, Any], base_dir: Path = EDGE_DIR) -> Config:
 def load_config(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
     """設定を読む。path 省略時は edge/config.toml、無ければ config.example.toml に警告付きで戻る。
 
-    環境変数 EDGE_DEVICE_KEY があれば [auth] device_key より優先する。
+    環境変数 EDGE_DEVICE_KEY と GALLERY_KEY があれば各設定より優先する。
     """
     env = os.environ if env is None else env
     if path is None:
@@ -183,6 +193,11 @@ def load_config(path: Path | None = None, env: dict[str, str] | None = None) -> 
     key = env.get(ENV_DEVICE_KEY)
     if key:
         cfg = replace(cfg, auth=replace(cfg.auth, device_key=key))
+    gallery_key = env.get(ENV_GALLERY_KEY)
+    if gallery_key:
+        cfg = replace(cfg, gallery=replace(cfg.gallery, key=gallery_key))
+    if cfg.gallery.mode == "http" and not cfg.gallery.key:
+        raise ConfigError("GALLERY_KEY is required in http mode")
     if cfg.auth.device_key == "change-me":
         log.warning(
             "device_key is the example value; set EDGE_DEVICE_KEY or config.toml",

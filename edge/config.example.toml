@@ -36,9 +36,11 @@ y_max = 650
 model_path = "models/face_landmarker.task"
 
 [gallery]
-mode = "mock"            # ステップ4で "http" を追加
+mode = "mock"            # 公開 gallery を使う場合は "http"
 ttl_minutes = 60
 public_base_url = ""     # mock では http://<listen host>:<port> を使う
+url = ""                 # http では https://stackchan-gallery.<account>.workers.dev
+# http の共有鍵は環境変数 GALLERY_KEY に設定する
 
 [share]
 text = "スタックチャンに撮ってもらいました！ #スタックチャン #StackChan"

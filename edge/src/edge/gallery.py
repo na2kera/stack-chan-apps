@@ -1,4 +1,4 @@
-"""写真の配布先。ステップ2a では MockGallery (メモリ + TTL) だけ。
+"""写真の配布先。LAN 内の MockGallery と公開 HTTPS の HttpGallery。
 
 MockGallery は edge 自身が /mock/p/<token> でページを配る。LAN 内の動作確認用で、
 スマホに QR で配る用途には使わない (spec 仮定 B: PC の LAN アドレスを QR に入れない)。
@@ -8,16 +8,21 @@ from __future__ import annotations
 
 import hashlib
 import html
+import logging
 import secrets
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 from urllib.parse import quote
 
+import httpx
+
 JST = timezone(timedelta(hours=9), "JST")
 X_INTENT = "https://x.com/intent/tweet?text="
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,6 +39,78 @@ class Gallery(Protocol):
     def delete(self, photo_id: str) -> None:
         """写真を直ちに消す (画像もページも配信しない)。未知の ID は無視する。"""
         ...
+
+
+class HttpGallery:
+    """公開 gallery へ採用 JPEG を送るクライアント。"""
+
+    def __init__(
+        self,
+        base_url: str,
+        key: str,
+        timeout: float,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._key = key
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"), timeout=timeout, transport=transport
+        )
+        self._sleep = sleep
+
+    def upload(self, jpeg: bytes, session_id: str, captured_at: datetime) -> UploadResult:
+        headers = {
+            "X-Gallery-Key": self._key,
+            "X-Session-Id": session_id,
+            "X-Captured-At": captured_at.isoformat(),
+            "Content-Type": "image/jpeg",
+        }
+        response: httpx.Response | None = None
+        for attempt in range(1, 4):
+            try:
+                response = self._client.post("/internal/photos", headers=headers, content=jpeg)
+            except httpx.RequestError as exc:
+                log.warning(
+                    "gallery upload connection error",
+                    extra={
+                        "event": "gallery_upload_retry",
+                        "attempt": attempt,
+                        "reason": type(exc).__name__,
+                    },
+                )
+                if attempt == 3:
+                    raise
+            else:
+                if response.status_code < 500:
+                    response.raise_for_status()
+                    return self._parse_upload(response)
+                log.warning(
+                    "gallery upload server error",
+                    extra={
+                        "event": "gallery_upload_retry",
+                        "attempt": attempt,
+                        "status": response.status_code,
+                    },
+                )
+                if attempt == 3:
+                    response.raise_for_status()
+            self._sleep(0.05 * attempt)
+        raise RuntimeError("gallery upload retry exhausted")  # pragma: no cover
+
+    @staticmethod
+    def _parse_upload(response: httpx.Response) -> UploadResult:
+        body = response.json()
+        return UploadResult(
+            photo_id=body["photo_id"],
+            photo_url=body["photo_url"],
+            share_url=body["share_url"],
+            expires_at=datetime.fromisoformat(body["expires_at"]),
+        )
+
+    def delete(self, photo_id: str) -> None:
+        """MVP の公開 gallery は即時削除 API を持たず、TTL で削除する。"""
+        log.info("gallery delete is deferred to TTL", extra={"event": "gallery_delete_deferred"})
 
 
 @dataclass

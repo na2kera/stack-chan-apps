@@ -21,6 +21,7 @@
 | `frame` | `POST /v1/sessions/{session_id}/frames` | ヘッダ `X-Frame-Id`, `X-Capture-Ms`, `X-Servo-X`, `X-Servo-Y`, `X-Width`, `X-Height`, `X-Format`, `X-Phase` (`compose` / `capture`)。本文は画像バイト列 | `200` frame_result（下記） |
 | `session_timeout` | `POST /v1/sessions/{session_id}/timeout` | なし | `200 { "candidate": { "frame_id", "score", "reason" } }` または `{ "candidate": null }` |
 | `review_decision` | `POST /v1/sessions/{session_id}/review` | `{ "decision": "save" \| "retake" }` | save: `202 { "status": "uploading" }`。retake: `200 { "ok": true }`（保持フレームを破棄） |
+| （REVIEW 表示用） | `GET /v1/sessions/{session_id}/candidate` | なし | `200 image/jpeg`（採用フレームがあればそれ、無ければ最良候補。品質 80、サイズは受信フレームのまま。`Cache-Control: no-store`）。どちらも無ければ `404 { "error": "no_candidate" }` |
 | `photo_ready` | `GET /v1/sessions/{session_id}/photo` | なし | `200 { "status": "pending" }` / `{ "status": "ready", "photo_url", "share_url", "expires_at" }` / `{ "status": "error", "reason" }` |
 | `session_cancel` | `POST /v1/sessions/{session_id}/cancel` | なし | `200 { "ok": true }`（未公開の候補を破棄） |
 | `audio_clip` | `POST /v1/audio` | ステップ3で決める（VAD で区切った PCM クリップの POST） | `{ "start_requested": bool }` |
@@ -55,6 +56,7 @@
 
 - `accepted: true` のあと device は `POST …/review {decision:"save"}` を送る。edge は採用フレームを保持するだけで、自動ではアップロードしない。`GET …/photo` は save の後にポーリングする。
 - 時間切れのときは `POST …/timeout` で候補を受け取り、利用者の選択に応じて `save` か `retake` を送る。
+- REVIEW で候補を見せるとき、device は `GET …/candidate` で edge が保持している同じフレームを JPEG で受け取って表示する（device 側の保持フレームと edge の候補がずれないようにする）。cancel 後・公開後・候補なしは 404 `no_candidate`。
 - `expires_at` は ISO 8601 で、日本時間のオフセット `+09:00` 付き（例 `2026-09-30T22:00:00+09:00`）。
 
 ## エラー応答
@@ -71,6 +73,7 @@
 | 400 | `image_too_large` | 宣言サイズ (`X-Width` / `X-Height`) または JPEG の実サイズが edge 設定の `max_width` / `max_height` (初期 1280×960) を超える |
 | 401 | `unauthorized` | `X-Device-Id` / `X-Device-Key` の不一致（本文の検証より先に判定） |
 | 404 | `unknown_session` | 未知の `session_id` |
+| 404 | `no_candidate` | candidate で、採用フレームも候補も無い（顔なし・cancel 後・公開後） |
 | 409 | `nothing_to_save` | 採用フレームも候補も無い、または REVIEW 以外の状態での save |
 | 409 | `cancelled` | cancel 済みセッションへの timeout |
 | 409 | `nothing_to_retake` | REVIEW / TIMEOUT 以外 (撮影中・アップロード中・公開後・cancel 後) での retake |

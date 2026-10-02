@@ -5,7 +5,7 @@ from conftest import AUTH, DEVICE_ID, DEVICE_KEY, new_session_id
 from fastapi.testclient import TestClient
 
 from edge.auth import verify_device
-from edge.config import AuthConfig, load_config
+from edge.config import AuthConfig, ConfigError, load_config
 
 HELLO = {"device_id": DEVICE_ID, "protocol_version": 1}
 
@@ -37,6 +37,7 @@ def test_401_on_every_endpoint(client: TestClient, headers: dict) -> None:
         ("post", f"/v1/sessions/{sid}/timeout", {}),
         ("post", f"/v1/sessions/{sid}/review", {"json": {"decision": "save"}}),
         ("get", f"/v1/sessions/{sid}/photo", {}),
+        ("get", f"/v1/sessions/{sid}/candidate", {}),
         ("post", f"/v1/sessions/{sid}/cancel", {}),
     ]
     for method, path, kw in calls:
@@ -56,3 +57,19 @@ def test_env_key_overrides_config(tmp_path) -> None:
     p.write_text('[auth]\ndevice_id = "d"\ndevice_key = "from-file"\n')
     assert load_config(p, env={}).auth.device_key == "from-file"
     assert load_config(p, env={"EDGE_DEVICE_KEY": "from-env"}).auth.device_key == "from-env"
+
+
+def test_http_gallery_reads_key_from_env(tmp_path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[gallery]\nmode = "http"\nurl = "https://gallery.test"\n')
+    cfg = load_config(p, env={"GALLERY_KEY": "gallery-secret"})
+    assert cfg.gallery.mode == "http"
+    assert cfg.gallery.url == "https://gallery.test"
+    assert cfg.gallery.key == "gallery-secret"
+
+
+def test_http_gallery_requires_env_key(tmp_path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[gallery]\nmode = "http"\nurl = "https://gallery.test"\n')
+    with pytest.raises(ConfigError, match="GALLERY_KEY"):
+        load_config(p, env={})
