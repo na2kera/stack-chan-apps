@@ -84,6 +84,16 @@ class ShareConfig:
 
 
 @dataclass(frozen=True)
+class StickerConfig:
+    """保存する写真の四隅に載せるｽﾀｯｸﾁｬﾝのドット絵 (sticker.py)。"""
+
+    enabled: bool = True
+    scale: int = 2  # 32px のドット絵を何倍にするか (整数倍でくっきり拡大)
+    outline: int = 2  # 白い縁取りの太さ (px)
+    margin: int = 6  # 写真の端からの余白 (px)
+
+
+@dataclass(frozen=True)
 class Config:
     server: ServerConfig
     auth: AuthConfig
@@ -92,6 +102,7 @@ class Config:
     analysis: AnalysisConfig
     gallery: GalleryConfig
     share: ShareConfig
+    sticker: StickerConfig = field(default_factory=StickerConfig)
     base_dir: Path = EDGE_DIR
 
     def model_file(self) -> Path:
@@ -107,6 +118,7 @@ _SECTIONS: dict[str, type] = {
     "analysis": AnalysisConfig,
     "gallery": GalleryConfig,
     "share": ShareConfig,
+    "sticker": StickerConfig,
 }
 
 

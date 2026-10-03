@@ -45,6 +45,7 @@ from edge.image import (
     sharpness,
 )
 from edge.logging_setup import log_event
+from edge.sticker import apply_sticker
 
 PROTOCOL_VERSION = 1
 SESSION_IDLE_SEC = 300.0  # 5 分イベントの無いセッションを破棄 (protocol.md)
@@ -495,7 +496,8 @@ class PhotoboothService:
     def _upload(self, session: Session, generation: int, frame: RetainedFrame) -> None:
         t0 = time.perf_counter()
         try:
-            jpeg = encode_jpeg(frame.rgb, JPEG_QUALITY)
+            # 保存する写真だけに四隅のドット絵を載せる (device の REVIEW / SHUTTER 表示は元のまま)。
+            jpeg = encode_jpeg(apply_sticker(frame.rgb, self.cfg.sticker), JPEG_QUALITY)
             result = self.gallery.upload(jpeg, session.session_id, frame.received_at)
         except Exception as exc:  # noqa: BLE001 - 失敗は状態に写して device に返す
             with session.lock:
