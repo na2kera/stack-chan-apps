@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stackchan-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-26",
+  "workers_dev": true,
+  "preview_urls": false,
+  "containers": [
+    {
+      "class_name": "EdgeContainer",
+      // edge/ をそのままビルドコンテキストにする (edge/.dockerignore が効く)
+      "image": "../edge/Dockerfile",
+      "image_build_context": "../edge",
+      // セッションは edge のメモリにあるので 1 台だけ (docs/design/step5-edge-cloud.md)
+      "max_instances": 1,
+      // 1 vCPU / 6 GiB。初期値。latency_ms と fps を測って決め直す
+      "instance_type": "standard-2"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "EDGE",
+        "class_name": "EdgeContainer"
+      }
+    ]
+  },
+  // Durable Object の宣言 (migrations の代わり。併用はできない)
+  "exports": {
+    "EdgeContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "vars": {
+    "DEVICE_ID": "stackchan-01",
+    // 公開 gallery の URL (https://stackchan-gallery.<account>.workers.dev)。空のままだと 503
+    "GALLERY_URL": ""
+  }
+  // Secret (wrangler secret put): EDGE_DEVICE_KEY, GALLERY_KEY
+}
