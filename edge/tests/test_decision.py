@@ -90,14 +90,14 @@ def test_face_too_small(cap: CaptureConfig) -> None:
     assert not v.conditions_met
 
 
-@pytest.mark.parametrize("kw", [{"blink_left": 0.6}, {"blink_right": 0.26}])
+@pytest.mark.parametrize("kw", [{"blink_left": 0.6}, {"blink_right": 0.46}])
 def test_one_eye_closed(cap: CaptureConfig, kw) -> None:
     v, _ = run([[face(**kw)], [face(**kw)]], cap)
     assert not v.all_eyes_open and not v.conditions_met
 
 
 def test_blink_threshold_inclusive(cap: CaptureConfig) -> None:
-    v, _ = run([[face(blink=0.25, smile=0.55)]] * 2, cap)
+    v, _ = run([[face(blink=0.45, smile=0.55)]] * 2, cap)
     assert v.all_eyes_open and v.all_smiling and v.conditions_met
 
 

@@ -70,7 +70,7 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | capture | countdown_sec | 10 | hello で device に返す撮影秒数 |
 | capture | margin_ratio | 0.08 | 上下左右の安全余白 (画像比) |
 | capture | min_face_width_ratio | 0.08 | これより幅の小さい顔は採用しない |
-| capture | eye_blink_max | 0.25 | `eyeBlinkLeft/Right` が左右ともこれ以下で開眼 |
+| capture | eye_blink_max | 0.45 | `eyeBlinkLeft/Right` が左右ともこれ以下で開眼 (笑うと目が細くなるので緩め) |
 | capture | mouth_smile_min | 0.35 | `mouthSmileLeft/Right` が左右ともこれ以上で笑顔 |
 | capture | stable_frames | 2 | 人数が連続で同じであることを要求するフレーム数 |
 | capture | accept_consecutive | 2 | 条件達成がこの回数連続したフレームを採用 |
