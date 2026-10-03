@@ -145,21 +145,24 @@ void Head::update(uint32_t now_ms)
         ++fault_count_;
         motion().stop();
         // 以後の targetX/Y (edge に「今のサーボ角」として送る) と相対指示は、今の実際の角度を基準にする。
-        target_x_ = clampX(cur_x);
-        target_y_ = clampY(cur_y);
+        // ログには元の指令角を出す (診断用)。
+        const int cmd_x = target_x_;
+        const int cmd_y = target_y_;
+        target_x_       = clampX(cur_x);
+        target_y_       = clampY(cur_y);
         if (fault_count_ >= cfg::HEAD_FAULT_LIMIT) {
             faulted_ = true;
             pending_ = false;
             mclog::tagError(kTag,
                             "servo not settling {} ms after command (at x={} y={}, target x={} y={}); {} times in a row, head disabled",
-                            now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_, fault_count_);
+                            now_ms - last_cmd_ms_, cur_x, cur_y, cmd_x, cmd_y, fault_count_);
         } else {
             paused_          = true;
             pending_         = false;
             paused_since_ms_ = now_ms;
             mclog::tagWarn(kTag,
                            "servo not settling {} ms after command (at x={} y={}, target x={} y={}); pause {} ms and retry ({}/{})",
-                           now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_, cfg::HEAD_FAULT_RETRY_MS,
+                           now_ms - last_cmd_ms_, cur_x, cur_y, cmd_x, cmd_y, cfg::HEAD_FAULT_RETRY_MS,
                            fault_count_, cfg::HEAD_FAULT_LIMIT);
         }
     }
