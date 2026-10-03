@@ -17,6 +17,7 @@ enum class State : uint8_t {
     Announce,
     Compose,
     Capture,
+    Shutter,  // 自動採用の直後: 白フラッシュ → 撮れた写真を止めて表示 (fw-app-step2.md「シャッター演出」)
     Review,
     Uploading,
     PhotoQr,
@@ -37,6 +38,8 @@ inline const char* stateName(State s)
             return "COMPOSE";
         case State::Capture:
             return "CAPTURE";
+        case State::Shutter:
+            return "SHUTTER";
         case State::Review:
             return "REVIEW";
         case State::Uploading:
@@ -65,6 +68,8 @@ inline const char* stateTitle(State s)
             return str::kTitleCompose;
         case State::Capture:
             return str::kTitleCapture;
+        case State::Shutter:
+            return str::kTitleShutter;
         case State::Review:
             return str::kTitleReview;
         case State::Uploading:

@@ -14,6 +14,7 @@
 //   - X_QR の「終了」も IDLE ではなくアプリを閉じてランチャーへ戻る。
 //   - ERROR の「再試行」は純正のカメラドライバを作り直さず、取り込みタスクだけ作り直す。
 //   - REVIEW の候補 JPEG は非同期で受け取る (EdgeClient::requestCandidate / pollCandidate)。
+//   - edge の自動採用の直後に SHUTTER (シャッター音・白フラッシュ・撮れた写真の静止表示) を挟む。
 #pragma once
 
 #include <cstddef>
@@ -69,6 +70,20 @@ private:
         Timeout,    // session_timeout の応答 (候補の有無)
         Candidate,  // 候補 JPEG
     };
+    // SHUTTER の画面の段階。
+    enum class ShutterPhase : uint8_t {
+        Flash,  // 白フラッシュ (SHUTTER_FLASH_MS)
+        Hold,   // 撮れた写真を止めて表示 (CAPTURED_HOLD_MS 以上、captured.wav が終わるまで)
+    };
+    // SHUTTER の音の段階: shutter.wav → captured.wav → 終わり。
+    enum class ShutterSound : uint8_t { Shutter, Captured, Done };
+    // SHUTTER で待っている候補 JPEG の状態。
+    enum class ShutterCandidate : uint8_t {
+        Waiting,  // edge に依頼済み・未着
+        Ready,    // デコード済みで表示待ち (View が持っている)
+        Shown,    // 表示した
+        Failed,   // 取れない・デコードできない (最後のプレビューのまま)
+    };
 
     void enter(State next, uint32_t now_ms);
     // judged=true なら edge の顔判定つき (sessionStart を送る)。false は固定フロー。
@@ -83,11 +98,18 @@ private:
     // QR を作れなかったので ERROR (「終了」だけ) へ。
     void failQr(uint32_t now_ms, const char* which);
     void requestExit(const char* by);
+    // edge に候補 JPEG を依頼する (REVIEW / SHUTTER)。前の依頼の後始末 (drainCandidate) は不要になる。
+    void requestCandidate();
+    // SHUTTER で受け取りきれなかった候補 JPEG を、届く (または EdgeClient が諦める) まで捨て続ける。
+    void drainCandidate();
 
     void updateIdle(const hw::Event& ev, uint32_t now_ms);
     void updateAnnounce(uint32_t now_ms);
     void updateCompose(uint32_t now_ms);
     void updateCapture(uint32_t now_ms);
+    void updateShutter(uint32_t now_ms);
+    void pollShutterCandidate(uint32_t now_ms);
+    void showShutterCaptured(uint32_t now_ms);
     void updateReview(const hw::Event& ev, uint32_t now_ms);
     void updateUploading(uint32_t now_ms);
     void updatePhotoQr(const hw::Event& ev, uint32_t now_ms);
@@ -155,13 +177,23 @@ private:
     // CAPTURE
     int shown_remaining_sec_ = -1;
 
+    // SHUTTER
+    ShutterPhase shutter_phase_        = ShutterPhase::Flash;
+    ShutterSound shutter_sound_        = ShutterSound::Done;
+    ShutterCandidate shutter_cand_     = ShutterCandidate::Failed;
+    view::CapturedSource shutter_shown_ = view::CapturedSource::None;
+    uint32_t shutter_sound_since_ms_   = 0;  // 今の音を鳴らし始めた時刻
+    uint32_t shutter_hold_since_ms_    = 0;  // 撮れた写真を出した時刻
+    // 受け取りきれなかった候補 JPEG を捨てる必要があるか (EdgeClient の受け取り口に残さない)
+    bool cand_drain_ = false;
+
     // REVIEW
     ReviewWait review_wait_        = ReviewWait::None;
     uint32_t review_wait_since_ms_ = 0;
 
     // UPLOADING
     bool uploading_captured_ = false;  // 自動採用 (「撮れたよ」を出す)
-    bool uploading_quiet_    = false;  // 再試行なので captured.wav を鳴らさない
+    bool uploading_quiet_    = false;  // 再試行 / SHUTTER で鳴らし済みなので captured.wav を鳴らさない
 
     // プレビューの実測
     uint32_t preview_frames_   = 0;

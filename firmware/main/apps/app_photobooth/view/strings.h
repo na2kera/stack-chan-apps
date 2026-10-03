@@ -18,6 +18,7 @@ inline constexpr const char* kTitleIdle      = "待機中";
 inline constexpr const char* kTitleAnnounce  = "撮影開始";
 inline constexpr const char* kTitleCompose   = "構図あわせ";
 inline constexpr const char* kTitleCapture   = "撮影中";
+inline constexpr const char* kTitleShutter   = "撮れたよ";  // SHUTTER: 撮れた写真に重ねるタイトル帯
 inline constexpr const char* kTitleReview    = "確認";
 inline constexpr const char* kTitleUploading = "準備中";
 inline constexpr const char* kTitlePhotoQr   = "写真を保存";
