@@ -79,6 +79,10 @@ private:
     bool moving_          = false;
     bool watching_        = false;  // 指示後、停止を確認するまで true
     bool faulted_         = false;
+    bool paused_          = false;  // 応答なしの直後で、指示を出さずに待っている
+    bool pending_         = false;  // 待っている間に来た指示 (target_x_/target_y_) を再開時に送る
+    uint32_t paused_since_ms_ = 0;
+    int fault_count_      = 0;      // 続けて応答なしになった回数
     bool active_          = false;  // begin() 〜 end() の間
     uint32_t last_poll_ms_ = 0;
     uint32_t last_motion_ms_ = 0;

@@ -50,11 +50,14 @@ stackchan::motion::Motion& motion()
 
 void Head::begin(uint32_t now_ms)
 {
-    faulted_  = false;
-    watching_ = false;
-    moving_   = false;
-    has_cmd_  = false;
-    active_   = true;
+    faulted_     = false;
+    watching_    = false;
+    moving_      = false;
+    has_cmd_     = false;
+    active_      = true;
+    paused_      = false;
+    pending_     = false;
+    fault_count_ = 0;
 
     auto& m = motion();
     // 撮影中は止まっても保持する (純正既定のトルク自動解放だと pitch が垂れてフレームがずれる)。
@@ -71,6 +74,8 @@ void Head::end(uint32_t now_ms)
     if (!active_) {
         return;
     }
+    paused_  = false;  // 閉じるときは待っている途中でも正面に戻す
+    pending_ = false;
     if (!faulted_) {
         // 低速の 1 指示で正面に戻す。戻りきる前にアプリが閉じても、ランチャーが Motion を進める。
         neutral(now_ms);
@@ -89,6 +94,16 @@ void Head::update(uint32_t now_ms)
     // 純正 Motion は update() でアニメーションを 50 Hz で進める (内部で間引き済み)。
     motion().update();
 
+    // 応答なしの後の待ちが終わったら、待っている間に来た最新の指示を送る。
+    if (paused_ && now_ms - paused_since_ms_ >= cfg::HEAD_FAULT_RETRY_MS) {
+        paused_ = false;
+        mclog::tagInfo(kTag, "resume head commands after pause ({} faults in a row)", fault_count_);
+        if (pending_ && !faulted_) {
+            pending_ = false;
+            command(target_x_, target_y_, now_ms);
+        }
+    }
+
     // 指示してから止まるまでの間だけ問い合わせる。止まった後の一時的な読み取り失敗
     // (ReadMove が -1 を返すと「動作中」に見える) で異常判定しないため。
     if (faulted_ || !watching_) {
@@ -103,7 +118,8 @@ void Head::update(uint32_t now_ms)
         last_motion_ms_ = now_ms;
     }
     if (!moving_) {
-        watching_ = false;
+        watching_    = false;
+        fault_count_ = 0;
         mclog::tagInfo(kTag, "settled at target x={} y={} in {} ms", target_x_, target_y_, now_ms - last_cmd_ms_);
         return;
     }
@@ -115,29 +131,56 @@ void Head::update(uint32_t now_ms)
         const int cur_y = m.getCurrentPitchAngle();
         if (std::abs(cur_x - target_x_) <= cfg::HEAD_SETTLE_TOLERANCE &&
             std::abs(cur_y - target_y_) <= cfg::HEAD_SETTLE_TOLERANCE) {
-            watching_ = false;
-            moving_   = false;
+            watching_    = false;
+            moving_      = false;
+            fault_count_ = 0;  // 目標の近くまでは来ているので、応答なしには数えない
             mclog::tagWarn(kTag, "servo still reports moving {} ms after command, but at ({},{}) near target ({},{}); treat as settled",
                            now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_);
             return;
         }
-        faulted_  = true;
+        // 目標から離れたまま止まらない。すぐには諦めず、少し待ってから指示をまた受け付ける。
+        // 続けて HEAD_FAULT_LIMIT 回なら、そのセッションの間は首を止める (spec §9 固定カメラで続行)。
         watching_ = false;
         moving_   = false;
+        ++fault_count_;
         motion().stop();
-        mclog::tagError(kTag, "servo not settling {} ms after command (at x={} y={}, target x={} y={}); head disabled",
-                        now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_);
+        // 以後の targetX/Y (edge に「今のサーボ角」として送る) と相対指示は、今の実際の角度を基準にする。
+        // ログには元の指令角を出す (診断用)。
+        const int cmd_x = target_x_;
+        const int cmd_y = target_y_;
+        target_x_       = clampX(cur_x);
+        target_y_       = clampY(cur_y);
+        if (fault_count_ >= cfg::HEAD_FAULT_LIMIT) {
+            faulted_ = true;
+            pending_ = false;
+            mclog::tagError(kTag,
+                            "servo not settling {} ms after command (at x={} y={}, target x={} y={}); {} times in a row, head disabled",
+                            now_ms - last_cmd_ms_, cur_x, cur_y, cmd_x, cmd_y, fault_count_);
+        } else {
+            paused_          = true;
+            pending_         = false;
+            paused_since_ms_ = now_ms;
+            mclog::tagWarn(kTag,
+                           "servo not settling {} ms after command (at x={} y={}, target x={} y={}); pause {} ms and retry ({}/{})",
+                           now_ms - last_cmd_ms_, cur_x, cur_y, cmd_x, cmd_y, cfg::HEAD_FAULT_RETRY_MS,
+                           fault_count_, cfg::HEAD_FAULT_LIMIT);
+        }
     }
 }
 
 void Head::command(int x, int y, uint32_t now_ms)
 {
+    if (faulted_) {
+        // 首を止めた後は目標も変えない (targetX/Y は止まった実際の角度のまま edge に送る)。
+        return;
+    }
     target_x_     = clampX(x);
     target_y_     = clampY(y);
     last_cmd_ms_  = now_ms;
     last_poll_ms_ = now_ms;
     has_cmd_      = true;
-    if (faulted_) {
+    if (paused_) {
+        pending_ = true;  // 待ちが終わったら update() がこの目標を送る
         return;
     }
     moving_         = true;  // 指示直後は動作中とみなす (次の update() で実測に置き換わる)
@@ -161,6 +204,9 @@ bool Head::nudge(int dx, int dy, uint32_t now_ms)
 {
     if (has_cmd_ && now_ms - last_cmd_ms_ < cfg::HEAD_STEP_INTERVAL_MS) {
         return false;
+    }
+    if (paused_) {
+        return false;  // 顔追従の小さな指示は、待っている間は捨てる (古くなるので覚えない)
     }
     dx               = std::min(std::max(dx, -cfg::HEAD_STEP_MAX), cfg::HEAD_STEP_MAX);
     dy               = std::min(std::max(dy, -cfg::HEAD_STEP_MAX), cfg::HEAD_STEP_MAX);

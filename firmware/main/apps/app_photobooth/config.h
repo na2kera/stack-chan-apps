@@ -65,9 +65,14 @@ constexpr uint32_t HEAD_SETTLE_MS = 150;
 // これより小さい首の指示は出さない (1°)。サーボの不感帯より小さい移動は「止まった」と報告されず、
 // 応答なし (HEAD_MOVE_TIMEOUT_MS) と誤判定されるため。
 constexpr int HEAD_MIN_STEP = 10;
-// HEAD_MOVE_TIMEOUT_MS を過ぎても動作中のとき、実際の角度が目標からこの範囲 (2°) なら止まったとみなす。
-// 範囲外なら本当に応答なしとして首を止める。
-constexpr int HEAD_SETTLE_TOLERANCE = 20;
+// HEAD_MOVE_TIMEOUT_MS を過ぎても動作中のとき、実際の角度が目標からこの範囲 (5°) なら止まったとみなす。
+// 実機で、目標から約 4° ずれた位置で寄り切れずに「動作中」のままになることがあった (不感帯・機構の引っかかり)。
+constexpr int HEAD_SETTLE_TOLERANCE = 50;
+// 範囲外で止まらないときは、この時間は首の指示を出さずに待ち、その後また受け付ける (1 回で諦めない)。
+// 待っている間に来た最新の指示は覚えておき、再開したときに送る。
+constexpr uint32_t HEAD_FAULT_RETRY_MS = 2000;
+// 応答なしがこの回数続いたら、そのセッションの間は首を止めて固定カメラにする (spec §9)。
+constexpr int HEAD_FAULT_LIMIT = 3;
 
 // ---- カメラ ----
 // プレビューの向き。純正は起動時に SetHMirror(false) にしているので、既定は純正のまま。
