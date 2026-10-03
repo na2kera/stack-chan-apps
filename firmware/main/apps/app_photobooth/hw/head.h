@@ -48,9 +48,15 @@ public:
     }
 
     // サーボ応答なしと判定済みか。以後は首を動かさない。
+    // そのセッションの間、首を止めたか (応答なしが HEAD_FAULT_LIMIT 回続いた)。
     bool faulted() const
     {
         return faulted_;
+    }
+    // 応答なしの直後で、首の指示を一時的に止めている間 true。
+    bool paused(uint32_t now_ms) const
+    {
+        return paused_ && now_ms - paused_since_ms_ < kRetryMs();
     }
 
     // 最後に首が動いていた時刻: 最後の指示か、isMoving() が true だった最後の問い合わせ。
@@ -79,6 +85,10 @@ private:
     bool moving_          = false;
     bool watching_        = false;  // 指示後、停止を確認するまで true
     bool faulted_         = false;
+    bool paused_          = false;  // 応答なしの直後で指示を止めている
+    uint32_t paused_since_ms_ = 0;
+    int fault_count_      = 0;      // 続けて応答なしになった回数
+    static uint32_t kRetryMs();
     bool active_          = false;  // begin() 〜 end() の間
     uint32_t last_poll_ms_ = 0;
     uint32_t last_motion_ms_ = 0;

@@ -68,6 +68,10 @@ constexpr int HEAD_MIN_STEP = 10;
 // HEAD_MOVE_TIMEOUT_MS を過ぎても動作中のとき、実際の角度が目標からこの範囲 (2°) なら止まったとみなす。
 // 範囲外なら本当に応答なしとして首を止める。
 constexpr int HEAD_SETTLE_TOLERANCE = 20;
+// 応答なしと判定したら、この時間は首の指示を出さずに待ち、その後また受け付ける (1 回で諦めない)。
+constexpr uint32_t HEAD_FAULT_RETRY_MS = 2000;
+// 応答なしがこの回数続いたら、そのセッションの間は首を止めて固定カメラにする (spec §9)。
+constexpr int HEAD_FAULT_LIMIT = 3;
 
 // ---- カメラ ----
 // プレビューの向き。純正は起動時に SetHMirror(false) にしているので、既定は純正のまま。
