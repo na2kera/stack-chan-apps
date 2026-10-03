@@ -7,6 +7,8 @@ img{width:100%;height:auto;border-radius:8px;background:#ddd}
 .btn{display:block;text-align:center;padding:14px;margin:16px 0;border-radius:8px;
 background:#1d9bf0;color:#fff;text-decoration:none;font-weight:bold}
 .note{font-size:.9em;color:#555}
+.credit{font-size:.75em;color:#777;line-height:1.5;margin-top:24px}
+.credit a{color:#777}
 `;
 
 function page(title: string, body: string): string {
@@ -28,11 +30,18 @@ export function formatJst(iso: string): string {
   return `${value("year")}-${value("month")}-${value("day")} ${value("hour")}:${value("minute")}`;
 }
 
+// ｽﾀｯｸﾁｬﾝ二次創作ガイドラインのクレジットと、写真に載せたドット絵の出典 (MIT License)。
+// 素材の詳細は edge/src/edge/assets/README.md。
+const CREDIT =
+  '<p class="credit">ｽﾀｯｸﾁｬﾝは<a href="https://twitter.com/stack_chan" rel="noreferrer">ししかわ</a>が開発、公開している、手乗りサイズのｽｰﾊﾟｰｶﾜｲｲコミュニケーションロボットです。<br>' +
+  '作品ページ: <a href="https://github.com/stack-chan/stack-chan" rel="noreferrer">github.com/stack-chan/stack-chan</a><br>' +
+  '写真のドット絵: <a href="https://github.com/meganetaaan/mouse-follower" rel="noreferrer">meganetaaan/mouse-follower</a> (MIT License)</p>';
+
 export function renderPhotoPage(token: string, metadata: PhotoMetadata): string {
   const image = `/p/${token}.jpg`;
   return page(
     "スタックチャンの写真",
-    `<h1>スタックチャンの写真</h1><img src="${image}" alt="写真"><a class="btn" href="${image}?download=1">写真をダウンロード</a><p>削除予定: ${formatJst(metadata.expires_at)}（日本時間）</p><p class="note">この URL を知っている人は誰でも見られます。保存はお早めに</p>`,
+    `<h1>スタックチャンの写真</h1><img src="${image}" alt="写真"><a class="btn" href="${image}?download=1">写真をダウンロード</a><p>削除予定: ${formatJst(metadata.expires_at)}（日本時間）</p><p class="note">この URL を知っている人は誰でも見られます。保存はお早めに</p>${CREDIT}`,
   );
 }
 

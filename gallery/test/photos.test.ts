@@ -119,7 +119,12 @@ describe("GET /p/<token>", () => {
     const { body } = await createPhoto();
     const page = await SELF.fetch(body.photo_url);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("この URL を知っている人は誰でも見られます。保存はお早めに");
+    const html = await page.text();
+    expect(html).toContain("この URL を知っている人は誰でも見られます。保存はお早めに");
+    // ｽﾀｯｸﾁｬﾝ二次創作ガイドラインのクレジットとドット絵の出典
+    expect(html).toContain("ｽﾀｯｸﾁｬﾝは");
+    expect(html).toContain("https://github.com/stack-chan/stack-chan");
+    expect(html).toContain("meganetaaan/mouse-follower");
     expect(page.headers.get("Cache-Control")).toBe("no-store");
     expect(page.headers.get("Referrer-Policy")).toBe("no-referrer");
     expect(page.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
