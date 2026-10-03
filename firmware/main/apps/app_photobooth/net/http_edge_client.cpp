@@ -590,7 +590,7 @@ bool HttpEdgeClient::pollCandidate(bool& ok, JpegBytes& jpeg)
             }
             w.cand_jpeg.clear();
             done = true;
-        } else if (waited >= cand_timeout_ms_ * (1u + 1u) + kCandidateWaitMarginMs) {  // 送り直し 1 回分を含む
+        } else if (waited >= cand_timeout_ms_ + kCandidateWaitMarginMs) {  // 従来どおり「期限 + 余裕」。REVIEW は 3.5 秒、SHUTTER は 1.3 秒
             ok   = false;
             done = true;
         }
