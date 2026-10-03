@@ -26,6 +26,13 @@ namespace photobooth::view {
 
 class Page;
 
+// SHUTTER で撮れた写真として何を出したか。
+enum class CapturedSource : uint8_t {
+    Candidate,  // edge の候補 JPEG (prepareCapturedJpeg() で用意したもの)
+    Preview,    // 最後のプレビューフレーム (止めたまま)
+    None,       // どちらも無い (タイトル帯だけ)
+};
+
 // 待機画面の右下に出す接続状態。
 enum class IdleLink : uint8_t {
     Offline,  // 「PC未接続」
@@ -76,6 +83,17 @@ public:
     // REVIEW: edge の候補 JPEG を全面に出し、タイトル帯と「保存する」「撮り直す」を重ねる。
     // ヘッダの大きさが 320x240 でない、またはデコードできなければ、画面を変えずに false。
     bool showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len);
+    // SHUTTER: 全面を白くする (フラッシュ)。ボタンなし。プレビュー用バッファの中身は変えない。
+    void showShutterFlash();
+    // SHUTTER: edge の候補 JPEG を確かめてデコードし、表示せずに持っておく (showReviewJpeg と同じ検査)。
+    // 今の画面は変えない。デコードできなければ false。
+    bool prepareCapturedJpeg(const uint8_t* jpeg, size_t len);
+    // SHUTTER: 撮れた写真を全面に出し、タイトル帯 (title) を重ねる。ボタンなし。
+    // prepareCapturedJpeg() で用意した JPEG があればそれを (所有権は画面へ移る)、無ければ最後の
+    // プレビューフレームを止めたまま出す。どちらを出したかを返す。
+    CapturedSource showCaptured(const char* title);
+    // prepareCapturedJpeg() で用意したまま表示しなかった JPEG を解放する。
+    void discardCapturedJpeg();
     // REVIEW: 候補なし。text (「顔が見つからなかったよ」など) と「撮り直す」だけ。
     void showReviewEmpty(const char* title, const char* text);
     // UPLOADING: 「写真を準備中」。captured=true なら上に「撮れたよ」を出す (自動採用のとき)。
@@ -98,6 +116,8 @@ private:
     void addPreview(bool camera_ok);
     void addBand(const char* text, bool hidden);
     bool setPreviewSize(int width, int height);
+    // ヘッダを確かめて (320x240 のベースラインだけ) RGB565 にデコードする。LVGL のロックの外で呼ぶ。
+    static std::shared_ptr<LvglAllocatedImage> decodeCandidateJpeg(const uint8_t* jpeg, size_t len);
 
     hw::Input& input_;
     std::unique_ptr<Page> page_;
@@ -107,6 +127,7 @@ private:
     size_t preview_capacity_  = 0;        // 画素数
     lv_image_dsc_t preview_dsc_{};
     lv_obj_t* preview_img_    = nullptr;  // 今の画面のプレビュー (無ければ nullptr)
+    bool preview_has_frame_   = false;    // preview_buf_ にカメラのフレームが入っているか (SHUTTER で使う)
     lv_obj_t* label_faces_    = nullptr;  // CAPTURE の人数
     lv_obj_t* label_remain_   = nullptr;  // CAPTURE の残り秒数
     lv_obj_t* label_status_   = nullptr;  // 待機の接続状態
@@ -116,6 +137,8 @@ private:
     lv_obj_t* label_wifi_     = nullptr;  // 「Wi-Fi接続中」画面の進み具合
     // REVIEW に出している候補 JPEG のデコード結果。lv_image が参照するので、画面を作り直すまで持つ。
     std::shared_ptr<LvglAllocatedImage> review_image_;
+    // SHUTTER で表示を待っている候補 JPEG のデコード結果 (まだ lv_image は参照していない)。
+    std::shared_ptr<LvglAllocatedImage> captured_image_;
 };
 
 }  // namespace photobooth::view
