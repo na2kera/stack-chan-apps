@@ -43,4 +43,4 @@ url = ""                 # http では https://stackchan-gallery.<account>.worke
 # http の共有鍵は環境変数 GALLERY_KEY に設定する
 
 [share]
-text = "@na2kera_0510 のｽﾀｯｸﾁｬﾝに撮ってもらいました！　#ｽﾀｯｸﾁｬﾝ #スタックチャン #StackChan #STECHFES2026 #STECH"
+text = "@na2kera_0510 のｽﾀｯｸﾁｬﾝに撮ってもらいました！　#ｽﾀｯｸﾁｬﾝ #StackChan #STECHFES2026 #STECH"

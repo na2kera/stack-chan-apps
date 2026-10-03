@@ -69,8 +69,7 @@ def test_share_redirect_has_text_only(client: TestClient, gallery: MockGallery) 
     assert loc.startswith("https://x.com/intent/tweet?text=")
     text = parse_qs(urlparse(loc).query)["text"][0]
     assert text == (
-        "@na2kera_0510 のｽﾀｯｸﾁｬﾝに撮ってもらいました！　"
-        "#ｽﾀｯｸﾁｬﾝ #スタックチャン #StackChan #STECHFES2026 #STECH"
+        "@na2kera_0510 のｽﾀｯｸﾁｬﾝに撮ってもらいました！　#ｽﾀｯｸﾁｬﾝ #StackChan #STECHFES2026 #STECH"
     )
     assert _token(res.photo_url) not in loc
     assert "edge.test" not in loc and "/mock/p/" not in loc
