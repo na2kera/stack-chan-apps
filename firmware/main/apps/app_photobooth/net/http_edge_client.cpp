@@ -177,6 +177,8 @@ struct EdgeWorker {
         bool save;            // Review
         uint32_t gen;         // 依頼時の世代
         uint32_t seq;         // Candidate の依頼番号
+        uint32_t timeout_ms;  // Candidate: リクエスト全体の期限 (0 なら EDGE_TIMEOUT_MS)
+        bool allow_retry;     // Candidate: 通信失敗のとき 1 回だけ送り直すか
         uint32_t started_ms;  // Start
         char sid[37];
     };
@@ -230,7 +232,7 @@ struct EdgeWorker {
     void sendHello();
     void pollPhoto(uint32_t now);
     void publishPhoto(uint32_t gen, const PhotoInfo& info);
-    void fetchCandidate(const char* sid, bool& ok, JpegBytes& jpeg);
+    void fetchCandidate(const char* sid, uint32_t timeout_ms, bool allow_retry, bool& ok, JpegBytes& jpeg);
     // JSON / 空本文のリクエスト。応答本文は json (NUL 終端、json_len バイト) に入る。
     // retry_transport なら通信失敗 (status < 0) のとき接続を作り直して 1 回だけ送り直す
     // (keep-alive の接続が edge 側で閉じられていた場合の対策。冪等なリクエストだけ)。
@@ -293,6 +295,7 @@ struct EdgeWorker {
     bool http_open                = false;  // TCP 接続を持っている (と思っている)
     bool sending_cancel           = false;  // 終了要求の後でも送ってよいリクエスト (session_cancel) の最中
     uint32_t request_started_ms   = 0;      // 今のリクエストの期限の起点 (exchange の中だけで使う)
+    uint32_t request_timeout_ms   = config::EDGE_TIMEOUT_MS;  // 今のリクエストの期限 (exchange の中だけで使う)
     char json[kMaxJsonBody + 1]   = {};     // 直近の応答本文
     size_t json_len               = 0;
     int send_idx                  = 1;
@@ -538,16 +541,19 @@ bool HttpEdgeClient::pollTimeout(bool& ok, bool& has_candidate)
     return true;
 }
 
-void HttpEdgeClient::requestCandidate(const Session& s)
+void HttpEdgeClient::requestCandidate(const Session& s, uint32_t timeout_ms, bool allow_retry)
 {
     cand_waiting_      = true;
     cand_requested_ms_ = nowMs();
+    cand_timeout_ms_   = timeout_ms != 0 ? timeout_ms : config::EDGE_TIMEOUT_MS;
     if (!worker_) return;  // pollCandidate() がすぐ失敗を返す
     auto& w = *worker_;
     if (++cand_seq_ == 0) ++cand_seq_;  // 0 は「待っていない」
     EdgeWorker::Command c{};
     c.kind = EdgeWorker::CmdKind::Candidate;
-    c.seq  = cand_seq_;
+    c.seq         = cand_seq_;
+    c.timeout_ms  = cand_timeout_ms_;
+    c.allow_retry = allow_retry;
     copyStr(c.sid, sizeof(c.sid), s.id);
     {
         std::lock_guard<std::mutex> lock(w.mutex);
@@ -584,7 +590,7 @@ bool HttpEdgeClient::pollCandidate(bool& ok, JpegBytes& jpeg)
             }
             w.cand_jpeg.clear();
             done = true;
-        } else if (waited >= config::EDGE_TIMEOUT_MS + kCandidateWaitMarginMs) {
+        } else if (waited >= cand_timeout_ms_ * (1u + 1u) + kCandidateWaitMarginMs) {  // 送り直し 1 回分を含む
             ok   = false;
             done = true;
         }
@@ -995,7 +1001,7 @@ void EdgeWorker::handleCommand(const Command& c)
         case CmdKind::Candidate: {
             bool ok = false;
             JpegBytes jpeg;
-            fetchCandidate(c.sid, ok, jpeg);
+            fetchCandidate(c.sid, c.timeout_ms, c.allow_retry, ok, jpeg);
             std::lock_guard<std::mutex> lock(mutex);
             if (c.seq == cand_wanted_seq) {
                 cand_jpeg     = std::move(jpeg);  // 所有権は mailbox へ
@@ -1227,7 +1233,7 @@ void EdgeWorker::sendFrame(const FrameMeta& meta)
     }
 }
 
-void EdgeWorker::fetchCandidate(const char* sid, bool& ok, JpegBytes& jpeg)
+void EdgeWorker::fetchCandidate(const char* sid, uint32_t timeout_ms, bool allow_retry, bool& ok, JpegBytes& jpeg)
 {
     ok = false;
     char path[96];
@@ -1237,10 +1243,15 @@ void EdgeWorker::fetchCandidate(const char* sid, bool& ok, JpegBytes& jpeg)
     rq.path       = path;
     rq.binary_out = &jpeg;
     Reply r;
-    for (int attempt = 0; attempt < 2; ++attempt) {  // 通信失敗のときだけ 1 回送り直す (GET は冪等)
+    // SHUTTER の依頼は短い期限で 1 回だけ (後ろに並ぶ save を待たせない)。REVIEW は通信失敗のときだけ
+    // 1 回送り直す (GET は冪等)。
+    request_timeout_ms   = timeout_ms != 0 ? timeout_ms : config::EDGE_TIMEOUT_MS;
+    const int attempts   = allow_retry ? 2 : 1;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
         r = exchange(rq);
         if (r.status >= 0 || r.status == kErrNoWifi || r.status == kErrAborted) break;
     }
+    request_timeout_ms = config::EDGE_TIMEOUT_MS;  // 以後のリクエストは既定の期限
     last_request_ms = nowMs();
     requested_once  = true;
     if (r.status != 200) {
@@ -1488,10 +1499,10 @@ bool EdgeWorker::armDeadline()
     // (ソケットを外から強制的に切る方式は、切る側のタスクのブロックと fd の取り違えのリスクが
     //  上回るため採らない。docs/design/fw-app-step2.md §4.5)
     const uint32_t elapsed = nowMs() - request_started_ms;
-    if (elapsed >= config::EDGE_TIMEOUT_MS) {
+    if (elapsed >= request_timeout_ms) {
         return false;
     }
-    const int remaining = static_cast<int>(config::EDGE_TIMEOUT_MS - elapsed);
+    const int remaining = static_cast<int>(request_timeout_ms - elapsed);
     esp_http_client_set_timeout_ms(http, remaining);  // 1 ms 以上。期限を越えて待たない
     return true;
 }

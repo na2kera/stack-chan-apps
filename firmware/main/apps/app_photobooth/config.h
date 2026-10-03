@@ -32,6 +32,9 @@ constexpr uint32_t COMPOSE_STABLE_MS  = 1000;  // 顔が枠内に連続して入
 constexpr uint8_t MAX_FACES           = 4;     // 「4人までだよ」の人数 (edge の max_faces と揃える)
 // SHUTTER (自動採用の直後のシャッター演出。docs/design/fw-app-step2.md「シャッター演出」)
 constexpr uint32_t SHUTTER_FLASH_MS = 150;   // 画面を白く光らせる時間
+// SHUTTER で撮れた写真 (候補 JPEG) を取りに行くときの期限。1 回だけ試し、送り直さない。
+// この依頼の後ろに save が並ぶので、短くして save を待たせない (codex レビュー)。
+constexpr uint32_t SHUTTER_CANDIDATE_TIMEOUT_MS = 800;
 constexpr uint32_t CAPTURED_HOLD_MS = 1000;  // 撮れた写真を止めて見せる最短の時間 (captured.wav が終わるまでは延びる)
 
 // ---- edge (PC) との通信 (docs/protocol.md「タイムアウトと再試行」) ----

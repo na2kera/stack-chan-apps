@@ -49,7 +49,7 @@ public:
     {
         return false;
     }
-    void requestCandidate(const Session&) override
+    void requestCandidate(const Session&, uint32_t, bool) override
     {
     }
     bool pollCandidate(bool&, JpegBytes&) override

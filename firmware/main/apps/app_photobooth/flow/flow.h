@@ -99,7 +99,7 @@ private:
     void failQr(uint32_t now_ms, const char* which);
     void requestExit(const char* by);
     // edge に候補 JPEG を依頼する (REVIEW / SHUTTER)。前の依頼の後始末 (drainCandidate) は不要になる。
-    void requestCandidate();
+    void requestCandidate(uint32_t timeout_ms = 0, bool allow_retry = true);  // 0 = EDGE_TIMEOUT_MS
     // SHUTTER で受け取りきれなかった候補 JPEG を、届く (または EdgeClient が諦める) まで捨て続ける。
     void drainCandidate();
 

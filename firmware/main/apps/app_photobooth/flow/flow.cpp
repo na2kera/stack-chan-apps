@@ -371,10 +371,10 @@ int Flow::buttonHit(const hw::Event& ev) const
     return ev.index;
 }
 
-void Flow::requestCandidate()
+void Flow::requestCandidate(uint32_t timeout_ms, bool allow_retry)
 {
     cand_drain_ = false;  // 新しい依頼で前の依頼の結果は EdgeClient が捨てる
-    edge_.requestCandidate(session_);
+    edge_.requestCandidate(session_, timeout_ms, allow_retry);
 }
 
 void Flow::drainCandidate()
@@ -669,7 +669,8 @@ void Flow::updateCapture(uint32_t now_ms)
         mclog::tagInfo(kTag, "frame accepted by edge at {} ms (faces {}/{})", elapsed, shown_faces_, shown_target_);
         // SHUTTER に出す採用フレームの JPEG を先に依頼する。edge はコマンドを順に処理し、公開が終わると
         // フレームを捨てる (candidate が 404 になる) ので、save より前に取りに行く。
-        requestCandidate();
+        // 1 回だけ・短い期限で取りに行き、後ろの save を待たせない (失敗ならプレビューを止めて見せる)。
+        requestCandidate(config::SHUTTER_CANDIDATE_TIMEOUT_MS, false);
         shutter_cand_ = ShutterCandidate::Waiting;
         // accepted でも save を送る (edge は自動ではアップロードしない、protocol.md)。
         edge_.reviewDecision(session_, true);
