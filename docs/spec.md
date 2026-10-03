@@ -28,6 +28,8 @@
 
 **実装仮定 B:** 音声認識とMediaPipeは撮影時に起動しているPC上で実行する。写真配布ページはスマホのモバイル回線からも閲覧できる公開HTTPSサービスで提供する。PCのLANアドレスをQRに入れない。ユーザーのOracleサーバーを使う場合も、HTTPS・稼働時間・一時ファイル削除を満たすこと。写真を受け取るPCと配布サーバーは分離可能にする。
 
+> 補足: PC の代わりに edge を Cloudflare Containers で動かし、device から HTTPS で繋ぐ構成（`edge-cloud/`）も選べる。設計は [docs/design/step5-edge-cloud.md](design/step5-edge-cloud.md)。
+
 **実装仮定 C:** 一度に最大4人を目標とする（設定値）。上限を超える、顔が端で見切れる、映り込んだ人と被写体を区別できない場合は自動採用せず案内する。人数の意図は画像から完全には分からないため、撮影開始前に全員が画角に入るよう案内する。
 
 ## 3. システム構成
@@ -120,7 +122,7 @@ COMPOSEは10秒の外側とする。CAPTURE開始からタイムアウトまで�
 
 ## 8. Device–Edge通信契約（MVP）
 
-実装者はHTTP + WebSocketまたは同等の双方向通信を選んでよいが、**下記のイベントと相関IDを保つこと**。通信仕様の確定版を`docs/protocol.md`に残す。edgeはLAN内でのみlistenし、device IDと共有鍵で接続を確認する。
+実装者はHTTP + WebSocketまたは同等の双方向通信を選んでよいが、**下記のイベントと相関IDを保つこと**。通信仕様の確定版を`docs/protocol.md`に残す。edgeはLAN内でのみlistenし、device IDと共有鍵で接続を確認する（クラウド構成では前段の Worker が HTTPS を終端し、同じ鍵で確認する。実装仮定 B の補足）。
 
 | 方向 | イベント | 必須項目 | 応答・備考 |
 | --- | --- | --- | --- |

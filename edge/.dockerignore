@@ -1,0 +1,12 @@
+# イメージに入れるものだけを列挙する (許可リスト)。
+# 手元の config.toml (鍵)、.venv、models/、tests/、tmp/、キャッシュは送らない。
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!README.md
+!config.example.toml
+!src/
+!tools/download_model.py
+**/__pycache__
+**/*.pyc

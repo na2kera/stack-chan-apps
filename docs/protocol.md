@@ -2,6 +2,8 @@
 
 `docs/spec.md` §8 のイベントを HTTP/1.1 に載せる。device が client、edge が server。edge は LAN 内でだけ listen する。
 
+クラウド構成（`edge-cloud/`、[docs/design/step5-edge-cloud.md](design/step5-edge-cloud.md)）では、ベース URL が `https://<worker-host>` になり、前段の Worker が同じ `X-Device-Id` / `X-Device-Key` を確かめてから edge に渡す。エンドポイントと応答は変わらない。
+
 ## 決定事項
 
 - **トランスポート**: HTTP/1.1 + JSON、フレームは `application/octet-stream`。device は keep-alive で 1 本の接続を使い回す。WebSocket は使わない（device 側の追加ライブラリを避け、フレーム→判定結果を同期の request/response にすることでバッファ所有権を単純にする）。

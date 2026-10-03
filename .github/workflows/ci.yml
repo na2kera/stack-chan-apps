@@ -12,6 +12,7 @@ jobs:
       device: ${{ steps.filter.outputs.device }}
       edge: ${{ steps.filter.outputs.edge }}
       gallery: ${{ steps.filter.outputs.gallery }}
+      edge-cloud: ${{ steps.filter.outputs.edge-cloud }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -26,6 +27,9 @@ jobs:
               - '.github/workflows/ci.yml'
             gallery:
               - 'gallery/**'
+              - '.github/workflows/ci.yml'
+            edge-cloud:
+              - 'edge-cloud/**'
               - '.github/workflows/ci.yml'
 
   device-build:
@@ -73,6 +77,90 @@ jobs:
       - name: Test (no model, no hardware)
         run: uv run pytest
 
+  # edge/Dockerfile を確かめる唯一の場所 (edge-cloud はこのイメージを Cloudflare Containers で動かす)。
+  # Worker と同じ 4 つの環境変数で起動し、モデルのロードを待って hello / session / frame (推論) を通す。
+  edge-image:
+    needs: changes
+    if: needs.changes.outputs.edge == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: stackchan-edge:ci
+      EDGE_DEVICE_KEY: ci-device-key
+      # 既定の stackchan-01 ではない ID にして、EDGE_DEVICE_ID の上書きを確かめる
+      EDGE_DEVICE_ID: stackchan-ci
+      # http モード。起動と hello / frame では gallery に接続しない (保存時だけ)
+      GALLERY_URL: https://gallery.invalid
+      GALLERY_KEY: ci-gallery-key
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (linux/amd64)
+        run: docker build --platform linux/amd64 -t "$IMAGE" edge
+      - name: Start container
+        run: |
+          docker run -d --name edge -p 127.0.0.1:8765:8765 \
+            -e EDGE_DEVICE_KEY -e EDGE_DEVICE_ID -e GALLERY_URL -e GALLERY_KEY "$IMAGE"
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:8765
+          # post <id> <key> <path> <out> [curl の追加引数...] → HTTP ステータスを出す
+          post() {
+            local id=$1 key=$2 path=$3 out=$4
+            shift 4
+            curl -s -o "$out" -w '%{http_code}' --max-time 10 -X POST "$base$path" \
+              -H "X-Device-Id: $id" -H "X-Device-Key: $key" "$@" || true
+          }
+          hello() {
+            post "$1" "$2" /v1/hello /tmp/hello.json -H 'Content-Type: application/json' \
+              -d "{\"device_id\":\"$1\",\"protocol_version\":1}"
+          }
+          fail() { echo "::error::$*"; exit 1; }
+
+          # モデルのロードが終わるまで listen しないので、最大 180 秒待つ
+          deadline=$((SECONDS + 180))
+          code=000
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            [ "$(docker inspect -f '{{.State.Running}}' edge)" = "true" ] \
+              || fail "container exited before becoming ready"
+            code=$(hello "$EDGE_DEVICE_ID" "$EDGE_DEVICE_KEY")
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          [ "$code" = "200" ] || fail "POST /v1/hello did not return 200 within 180 s (last: $code)"
+          grep -q '"ready":true' /tmp/hello.json || fail "hello: $(cat /tmp/hello.json)"
+
+          code=$(hello "$EDGE_DEVICE_ID" wrong-key)
+          [ "$code" = "401" ] || fail "wrong key returned $code, want 401"
+          code=$(hello stackchan-01 "$EDGE_DEVICE_KEY")
+          [ "$code" = "401" ] || fail "default device id returned $code, want 401 (EDGE_DEVICE_ID ignored?)"
+
+          # 1 フレーム (320x240 RGB565 の黒) を送り、デコードと推論を通す
+          sid=123e4567-e89b-42d3-a456-426614174000
+          code=$(post "$EDGE_DEVICE_ID" "$EDGE_DEVICE_KEY" /v1/sessions /tmp/session.json \
+            -H 'Content-Type: application/json' -d "{\"session_id\":\"$sid\",\"started_at_ms\":0}")
+          [ "$code" = "200" ] || fail "POST /v1/sessions returned $code: $(cat /tmp/session.json)"
+          head -c 153600 /dev/zero > /tmp/frame.bin
+          code=$(post "$EDGE_DEVICE_ID" "$EDGE_DEVICE_KEY" "/v1/sessions/$sid/frames" /tmp/frame.json \
+            -H 'Content-Type: application/octet-stream' \
+            -H 'X-Frame-Id: 1' -H 'X-Capture-Ms: 0' -H 'X-Servo-X: 0' -H 'X-Servo-Y: 450' \
+            -H 'X-Width: 320' -H 'X-Height: 240' -H 'X-Format: rgb565' -H 'X-Phase: compose' \
+            --data-binary @/tmp/frame.bin)
+          [ "$code" = "200" ] || fail "POST frames returned $code: $(cat /tmp/frame.json)"
+          grep -q '"face_count":0' /tmp/frame.json || fail "frame: $(cat /tmp/frame.json)"
+          echo "frame_result: $(cat /tmp/frame.json)"
+
+          # root で動いていないこと
+          uid=$(docker exec edge id -u)
+          [ "$uid" != "0" ] || fail "container runs as root"
+          echo "ok: hello 200, wrong key / default id 401, frame 200 (face_count 0), uid $uid"
+      - name: Container logs
+        if: always()
+        run: docker logs edge || true
+      - name: Stop container
+        if: always()
+        run: docker rm -f edge || true
+
   gallery-test:
     needs: changes
     if: needs.changes.outputs.gallery == 'true'
@@ -91,3 +179,27 @@ jobs:
         run: npm ci
       - name: Test
         run: npm test
+
+  edge-cloud-test:
+    needs: changes
+    if: needs.changes.outputs.edge-cloud == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge-cloud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: edge-cloud/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      # wrangler.jsonc の検査とバンドル。--containers-rollout=none ならイメージをビルドしない (Docker 不要)
+      - name: Validate Worker config (dry run)
+        run: npx wrangler deploy --dry-run --containers-rollout=none --outdir dist
