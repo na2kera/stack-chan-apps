@@ -14,6 +14,7 @@ firmware/  純正ファーム (m5stack/StackChan の firmware/ を git subtree �
 device/    旧・独立ファーム (PlatformIO, Arduino-ESP32)。凍結: 参照用に残し、以後更新しない
 edge/      PC で動かす Python サービス (音声認識・顔判定・首振り計算)   ※ステップ2以降
 gallery/   公開 HTTPS の写真配布サービス                                 ※ステップ4以降
+edge-cloud/ edge を Cloudflare Containers で動かす前段の Worker (PC なし構成)  ※ステップ5以降
 docs/      仕様・設計・通信契約
 ```
 
