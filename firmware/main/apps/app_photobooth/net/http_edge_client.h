@@ -54,7 +54,7 @@ public:
     bool pollResult(FrameResult& out) override;
     void sessionTimeout(const Session& s) override;
     bool pollTimeout(bool& ok, bool& has_candidate) override;
-    void requestCandidate(const Session& s) override;
+    void requestCandidate(const Session& s, uint32_t timeout_ms, bool allow_retry) override;
     bool pollCandidate(bool& ok, JpegBytes& jpeg) override;
     void reviewDecision(const Session& s, bool save) override;
     bool pollPhotoReady(PhotoInfo& out) override;
@@ -72,6 +72,7 @@ private:
 
     // ---- Flow のスレッドだけが触る ----
     bool cand_waiting_          = false;  // requestCandidate() の結果を待っている
+    uint32_t cand_timeout_ms_   = 0;      // 今の依頼の期限 (pollCandidate の待ち時間の上限に使う)
     uint32_t cand_seq_          = 0;      // 候補 JPEG の依頼番号
     uint32_t cand_requested_ms_ = 0;
     char begin_error_[96]       = {};     // worker_ が無いときの lastError()

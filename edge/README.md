@@ -71,12 +71,12 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | capture | margin_ratio | 0.08 | 上下左右の安全余白 (画像比) |
 | capture | min_face_width_ratio | 0.08 | これより幅の小さい顔は採用しない |
 | capture | eye_blink_max | 0.25 | `eyeBlinkLeft/Right` が左右ともこれ以下で開眼 |
-| capture | mouth_smile_min | 0.55 | `mouthSmileLeft/Right` が左右ともこれ以上で笑顔 |
+| capture | mouth_smile_min | 0.35 | `mouthSmileLeft/Right` が左右ともこれ以上で笑顔 |
 | capture | stable_frames | 2 | 人数が連続で同じであることを要求するフレーム数 |
 | capture | accept_consecutive | 2 | 条件達成がこの回数連続したフレームを採用 |
 | capture | rgb565_byte_order | little | RGB565 のバイト順 (`little` / `big`)。実機で確認 |
 | capture | max_width / max_height | 1280 / 960 | フレームの上限。宣言サイズ (`X-Width` / `X-Height`) か実サイズが超えたら 400 `image_too_large` |
-| head | gain_x / gain_y | -0.05 / 0.05 | 画像のずれ (px) → サーボ (1/10 度)。符号は実機で校正 |
+| head | gain_x / gain_y | -0.3 / 0.3 | 画像のずれ (px) → サーボ (1/10 度)。符号は実機で校正 |
 | head | deadband_px | 16 | 中心からのずれがこれ以下なら動かさない |
 | head | step_max | 30 | 1 回の指示の上限 (1/10 度) |
 | head | min_interval_ms | 500 | 指示の最小間隔 |

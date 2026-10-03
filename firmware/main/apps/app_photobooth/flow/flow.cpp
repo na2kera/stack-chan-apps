@@ -34,6 +34,9 @@ constexpr uint32_t kUploadingSoundGuardMs = 5000;
 constexpr uint32_t kReviewWaitMs = config::EDGE_TIMEOUT_MS * 3;
 // REVIEW で候補 JPEG を待つ上限の保険 (通常は EdgeClient::pollCandidate() が先に諦める)。
 constexpr uint32_t kCandidateGuardMs = config::EDGE_TIMEOUT_MS * 2;
+// SHUTTER の保険。isPlaying() が落ちてこない場合でも固まらないようにする
+// (shutter.wav は 240 ms。調整値ではないので config には出さない)。
+constexpr uint32_t kShutterSoundGuardMs = 1000;
 // DIAG の本文を作り直す間隔 (変わったときだけ描く)。
 constexpr uint32_t kDiagRefreshMs = 1000;
 // 待機画面の接続表示を確かめる間隔。
@@ -62,6 +65,20 @@ constexpr int kBtnErrorExit    = 1;
 constexpr int kBtnErrorOnlyExit = 0;  // ERROR (再試行なし): 終了
 constexpr int kBtnDiagReconnect = 0;  // DIAG: 再接続 / 判定なしで撮影 (戻るは頭部タッチ)
 constexpr int kBtnDiagShoot     = 1;
+
+// SHUTTER のログ用: 撮れた写真として何を出したか。
+const char* capturedName(view::CapturedSource src)
+{
+    switch (src) {
+        case view::CapturedSource::Candidate:
+            return "edge candidate";
+        case view::CapturedSource::Preview:
+            return "preview fallback";
+        case view::CapturedSource::None:
+            break;
+    }
+    return "no image";
+}
 
 // "2026-09-30T22:00:00+09:00" → "22:00"。形が違えば "--:--"。
 void formatExpires(const char* iso, char* out, size_t len)
@@ -112,6 +129,9 @@ void Flow::end(uint32_t now_ms)
     camera_.setStreaming(false);
     audio_.stop();
     candidate_.clear();
+    // SHUTTER で用意したまま出していない候補 JPEG。edge 側の受け取り口は edge_.end() が解放する。
+    view_.discardCapturedJpeg();
+    cand_drain_ = false;
     if (session_.active && judged_ && !photo_ready_) {
         // 公開前に閉じた: 未公開の候補を edge に捨てさせる (届かなくても 5 分で破棄される)。
         // QR を出した後 (公開済み) は送らない。
@@ -133,6 +153,12 @@ void Flow::enter(State next, uint32_t now_ms)
     mclog::tagInfo(kTag, "state {} -> {} ({} ms)", stateName(prev), stateName(next), now_ms - state_since_ms_);
     if (prev == State::Compose || prev == State::Capture) {
         logPreviewStats(now_ms);
+    }
+    if (prev == State::Shutter && next != State::Shutter) {
+        view_.discardCapturedJpeg();  // 表示しなかった候補 JPEG を持ち越さない
+        if (shutter_cand_ == ShutterCandidate::Waiting) {
+            cand_drain_ = true;  // 後から届く JPEG は受け取って捨てる
+        }
     }
     state_          = next;
     state_since_ms_ = now_ms;
@@ -183,6 +209,26 @@ void Flow::enter(State next, uint32_t now_ms)
             resetFrameWatch(now_ms);
             candidate_.clear();
             view_.showCapture(camera_ok_);
+            break;
+
+        case State::Shutter:
+            // CAPTURE の最後のフレームは preview バッファに残っている (取り込みは上で止めた)。
+            shutter_phase_         = ShutterPhase::Flash;
+            shutter_shown_         = view::CapturedSource::None;
+            shutter_hold_since_ms_ = now_ms;
+            mclog::tagInfo(kTag, "shutter: enter (flash {} ms, hold >= {} ms, candidate {})", config::SHUTTER_FLASH_MS,
+                           config::CAPTURED_HOLD_MS, shutter_cand_ == ShutterCandidate::Waiting ? "requested" : "none");
+            view_.showShutterFlash();
+            shutter_sound_since_ms_ = now_ms;
+            if (audio_.play(hw::Audio::Clip::Shutter)) {
+                shutter_sound_ = ShutterSound::Shutter;
+            } else if (audio_.play(hw::Audio::Clip::Captured)) {
+                mclog::tagWarn(kTag, "shutter: shutter sound unavailable; play captured voice");
+                shutter_sound_ = ShutterSound::Captured;
+            } else {
+                mclog::tagWarn(kTag, "shutter: audio unavailable; continue without sound");
+                shutter_sound_ = ShutterSound::Done;
+            }
             break;
 
         case State::Review:
@@ -325,12 +371,33 @@ int Flow::buttonHit(const hw::Event& ev) const
     return ev.index;
 }
 
+void Flow::requestCandidate(uint32_t timeout_ms, bool allow_retry)
+{
+    cand_drain_ = false;  // 新しい依頼で前の依頼の結果は EdgeClient が捨てる
+    edge_.requestCandidate(session_, timeout_ms, allow_retry);
+}
+
+void Flow::drainCandidate()
+{
+    if (!cand_drain_) {
+        return;
+    }
+    bool ok = false;
+    net::JpegBytes jpeg;
+    if (edge_.pollCandidate(ok, jpeg)) {
+        cand_drain_ = false;
+        mclog::tagInfo(kTag, "shutter: late candidate {} ({} bytes); discarded", ok ? "arrived" : "failed",
+                       jpeg.size());
+    }  // jpeg はここで解放される
+}
+
 void Flow::update(const hw::Event& ev, uint32_t now_ms)
 {
     head_.update(now_ms);
     if (exit_requested_) {
         return;
     }
+    drainCandidate();
     switch (state_) {
         case State::Idle:
             updateIdle(ev, now_ms);
@@ -343,6 +410,9 @@ void Flow::update(const hw::Event& ev, uint32_t now_ms)
             break;
         case State::Capture:
             updateCapture(now_ms);
+            break;
+        case State::Shutter:
+            updateShutter(now_ms);
             break;
         case State::Review:
             updateReview(ev, now_ms);
@@ -597,10 +667,117 @@ void Flow::updateCapture(uint32_t now_ms)
     }
     if (handleResult(true, now_ms)) {
         mclog::tagInfo(kTag, "frame accepted by edge at {} ms (faces {}/{})", elapsed, shown_faces_, shown_target_);
+        // SHUTTER に出す採用フレームの JPEG を先に依頼する。edge はコマンドを順に処理し、公開が終わると
+        // フレームを捨てる (candidate が 404 になる) ので、save より前に取りに行く。
+        // 1 回だけ・短い期限で取りに行き、後ろの save を待たせない (失敗ならプレビューを止めて見せる)。
+        requestCandidate(config::SHUTTER_CANDIDATE_TIMEOUT_MS, false);
+        shutter_cand_ = ShutterCandidate::Waiting;
         // accepted でも save を送る (edge は自動ではアップロードしない、protocol.md)。
         edge_.reviewDecision(session_, true);
         uploading_captured_ = true;
+        enter(State::Shutter, now_ms);
+    }
+}
+
+// ---- SHUTTER (自動採用の直後の演出) -----------------------------------------
+//
+// 白フラッシュ (SHUTTER_FLASH_MS) → 撮れた写真 + タイトル帯「撮れたよ」(ボタンなし)。
+// 音は shutter.wav → captured.wav。写真を CAPTURED_HOLD_MS 以上出し、captured.wav が終わったら
+// UPLOADING へ (save は CAPTURE で送ってあるので、UPLOADING は photo_ready を待つだけ)。
+// 写真は edge の候補 JPEG (採用フレーム)。フラッシュの終わりまでに届かなければ最後のプレビューを止めて
+// 出し、後から届いたら差し替える。フレームの結果・CAPTURE の 10 秒の期限はここでは扱わない。
+
+void Flow::updateShutter(uint32_t now_ms)
+{
+    // 採用後に届いた frame_result は使わない (首も動かさない)。
+    net::FrameResult late;
+    (void)edge_.pollResult(late);
+
+    pollShutterCandidate(now_ms);
+
+    const uint32_t elapsed = now_ms - state_since_ms_;
+    if (shutter_phase_ == ShutterPhase::Flash) {
+        if (elapsed >= config::SHUTTER_FLASH_MS) {
+            showShutterCaptured(now_ms);
+        }
+    } else if (shutter_cand_ == ShutterCandidate::Ready) {
+        // 最後のプレビューを出している間に候補が届いた: 実際に保存される写真に差し替える。
+        showShutterCaptured(now_ms);
+    }
+
+    // 音: shutter.wav が終わったら captured.wav。
+    if (shutter_sound_ == ShutterSound::Shutter &&
+        (!audio_.isPlaying() || now_ms - shutter_sound_since_ms_ > kShutterSoundGuardMs)) {
+        if (audio_.isPlaying()) {
+            mclog::tagWarn(kTag, "shutter: shutter sound still playing after {} ms", now_ms - shutter_sound_since_ms_);
+        }
+        mclog::tagInfo(kTag, "shutter: shutter sound {} ms; play captured voice", now_ms - shutter_sound_since_ms_);
+        shutter_sound_since_ms_ = now_ms;
+        shutter_sound_ = audio_.play(hw::Audio::Clip::Captured) ? ShutterSound::Captured : ShutterSound::Done;
+    } else if (shutter_sound_ == ShutterSound::Captured &&
+               (!audio_.isPlaying() || now_ms - shutter_sound_since_ms_ > kUploadingSoundGuardMs)) {
+        if (audio_.isPlaying()) {
+            mclog::tagWarn(kTag, "shutter: captured voice still playing after {} ms", now_ms - shutter_sound_since_ms_);
+        }
+        mclog::tagInfo(kTag, "shutter: captured voice {} ms", now_ms - shutter_sound_since_ms_);
+        shutter_sound_ = ShutterSound::Done;
+    }
+
+    if (shutter_phase_ == ShutterPhase::Hold && shutter_sound_ == ShutterSound::Done &&
+        now_ms - shutter_hold_since_ms_ >= config::CAPTURED_HOLD_MS) {
+        mclog::tagInfo(kTag, "shutter: done in {} ms (photo shown {} ms, {})", elapsed, now_ms - shutter_hold_since_ms_,
+                       capturedName(shutter_shown_));
+        // captured.wav は鳴らし終えたので UPLOADING では鳴らさない。「撮れたよ」の表示は今まで通り。
+        uploading_captured_ = true;
+        uploading_quiet_    = true;
         enter(State::Uploading, now_ms);
+    }
+}
+
+void Flow::pollShutterCandidate(uint32_t now_ms)
+{
+    if (shutter_cand_ != ShutterCandidate::Waiting) {
+        return;
+    }
+    const uint32_t waited = now_ms - state_since_ms_;
+    bool ok               = false;
+    net::JpegBytes jpeg;
+    const bool done = edge_.pollCandidate(ok, jpeg);
+    if (!done) {
+        if (waited >= kCandidateGuardMs) {
+            // 通常は EdgeClient::pollCandidate() が先に諦める。届いたら drainCandidate() で捨てる。
+            mclog::tagWarn(kTag, "shutter: candidate not received in {} ms; keep preview", waited);
+            shutter_cand_ = ShutterCandidate::Failed;
+            cand_drain_   = true;
+        }
+        return;
+    }
+    // デコード結果は View が持つ (表示するまで画面は変えない)。jpeg はここで解放される。
+    if (ok && view_.prepareCapturedJpeg(jpeg.data(), jpeg.size())) {
+        mclog::tagInfo(kTag, "shutter: edge candidate jpeg ({} bytes) ready after {} ms", jpeg.size(), waited);
+        shutter_cand_ = ShutterCandidate::Ready;
+    } else {
+        mclog::tagWarn(kTag, "shutter: edge candidate cannot be shown after {} ms ({}); keep preview", waited,
+                       ok ? "decode" : edge_.lastError());
+        shutter_cand_ = ShutterCandidate::Failed;
+    }
+}
+
+void Flow::showShutterCaptured(uint32_t now_ms)
+{
+    const view::CapturedSource prev = shutter_shown_;
+    shutter_shown_                  = view_.showCaptured(stateTitle(State::Shutter));
+    if (shutter_shown_ == view::CapturedSource::Candidate) {
+        shutter_cand_ = ShutterCandidate::Shown;
+    }
+    const char* what = capturedName(shutter_shown_);
+    if (shutter_phase_ == ShutterPhase::Flash) {
+        shutter_phase_         = ShutterPhase::Hold;
+        shutter_hold_since_ms_ = now_ms;
+        mclog::tagInfo(kTag, "shutter: flash {} ms; show {}", now_ms - state_since_ms_, what);
+    } else {
+        // 写真を差し替えても止めて見せる時間は延ばさない (差し替え前と同じ場面なので)。
+        mclog::tagInfo(kTag, "shutter: {} -> {} at {} ms", capturedName(prev), what, now_ms - state_since_ms_);
     }
 }
 
@@ -712,7 +889,7 @@ void Flow::updateReview(const hw::Event& ev, uint32_t now_ms)
                 return;
             }
             // edge が保持している同じフレームを JPEG で受け取って表示する (protocol.md)。
-            edge_.requestCandidate(session_);
+            requestCandidate();
             review_wait_          = ReviewWait::Candidate;
             review_wait_since_ms_ = now_ms;
         } else if (now_ms - review_wait_since_ms_ >= kReviewWaitMs) {

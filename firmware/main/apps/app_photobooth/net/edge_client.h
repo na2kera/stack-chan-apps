@@ -152,7 +152,9 @@ public:
     virtual bool pollTimeout(bool& ok, bool& has_candidate) = 0;
 
     // 候補 JPEG (GET …/candidate) を取りに行く (非同期)。結果は pollCandidate()。
-    virtual void requestCandidate(const Session&) = 0;
+    // timeout_ms はリクエスト全体の期限、allow_retry は通信失敗のとき 1 回だけ送り直すか。
+    // 既定 (0, true) は REVIEW 用 (EDGE_TIMEOUT_MS)。SHUTTER は短い期限で 1 回だけ試す。
+    virtual void requestCandidate(const Session&, uint32_t timeout_ms = 0, bool allow_retry = true) = 0;
     // 結果が出たら true (1 回だけ)。ok=true なら jpeg に JPEG が入る。取れなかった、または
     // EDGE_TIMEOUT_MS + 余裕 の間に結果が出なかったら ok=false。
     virtual bool pollCandidate(bool& ok, JpegBytes& jpeg) = 0;

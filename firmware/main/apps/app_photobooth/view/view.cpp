@@ -87,6 +87,7 @@ void View::end()
         label_wifi_   = nullptr;
         page_.reset();
         review_image_.reset();  // lv_image を消してから画像を解放する
+        captured_image_.reset();
     }
     if (preview_buf_ != nullptr) {
         heap_caps_free(preview_buf_);
@@ -149,6 +150,7 @@ void View::addPreview(bool camera_ok)
     }
     // 前の画面 (REVIEW の候補など) が一瞬見えないよう、最初のフレームが来るまでは黒にしておく。
     std::memset(preview_buf_, 0, preview_capacity_ * sizeof(uint16_t));
+    preview_has_frame_ = false;
     auto& img = page_->add<Image>(page_->root());
     img.setSrc(&preview_dsc_);
     img.align(LV_ALIGN_CENTER, 0, 0);
@@ -315,6 +317,7 @@ void View::updatePreview(const uint16_t* pixels, int width, int height)
     }
     // LVGL タスクが描画中に書き換えないよう、ロックの中でコピーしてから無効化する。
     std::memcpy(preview_buf_, pixels, static_cast<size_t>(width) * height * 2);
+    preview_has_frame_ = true;
     if (resized) {
         lv_image_set_src(preview_img_, &preview_dsc_);
     }
@@ -328,6 +331,7 @@ bool View::showReview(const char* title, const uint16_t* pixels, int width, int 
     newPage();
     if (pixels != nullptr && setPreviewSize(width, height)) {
         std::memcpy(preview_buf_, pixels, static_cast<size_t>(width) * height * 2);
+        preview_has_frame_ = true;
         auto& img = page_->add<Image>(page_->root());
         img.setSrc(&preview_dsc_);
         img.align(LV_ALIGN_CENTER, 0, 0);
@@ -346,36 +350,45 @@ bool View::showReview(const char* title, const uint16_t* pixels, int width, int 
     return false;
 }
 
-bool View::showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len)
+std::shared_ptr<LvglAllocatedImage> View::decodeCandidateJpeg(const uint8_t* jpeg, size_t len)
 {
     // デコード用の領域を確保する前に、ヘッダだけ読んで大きさを確かめる。プレビューと同じ大きさ
     // (320x240) 以外は出さない (edge は受信フレームと同じ大きさの JPEG を返す、protocol.md)。
     JpegInfo info;
     const JpegStatus st = readJpegInfo(jpeg, len, info);
     if (st == JpegStatus::Invalid) {
-        mclog::tagWarn(kTag, "review jpeg ({} bytes) has no valid header", len);
-        return false;
+        mclog::tagWarn(kTag, "candidate jpeg ({} bytes) has no valid header", len);
+        return nullptr;
     }
     if (st == JpegStatus::Unsupported) {
-        mclog::tagWarn(kTag, "review jpeg {}x{} is not baseline (SOF 0x{:02X}, {} bit, {} components)", info.width,
+        mclog::tagWarn(kTag, "candidate jpeg {}x{} is not baseline (SOF 0x{:02X}, {} bit, {} components)", info.width,
                        info.height, static_cast<unsigned>(info.sof), info.precision, info.components);
-        return false;
+        return nullptr;
     }
     if (info.width != kScreenW || info.height != kScreenH) {
-        mclog::tagWarn(kTag, "review jpeg {}x{} is not the expected {}x{}", info.width, info.height, kScreenW,
+        mclog::tagWarn(kTag, "candidate jpeg {}x{} is not the expected {}x{}", info.width, info.height, kScreenW,
                        kScreenH);
-        return false;
+        return nullptr;
     }
     // デコード (数十 ms) は LVGL のロックの外でする。出力は RGB565 LE (プレビューと同じ並び)。
     auto image = jpeg_dec::decode_to_lvgl(jpeg, len);
     if (image == nullptr || image->image_dsc() == nullptr) {
-        mclog::tagWarn(kTag, "review jpeg ({} bytes) cannot be decoded", len);
-        return false;
+        mclog::tagWarn(kTag, "candidate jpeg ({} bytes) cannot be decoded", len);
+        return nullptr;
     }
     const auto* dsc = image->image_dsc();
     if (static_cast<int32_t>(dsc->header.w) != kScreenW || static_cast<int32_t>(dsc->header.h) != kScreenH) {
-        mclog::tagWarn(kTag, "review jpeg decoded to {}x{}", static_cast<int>(dsc->header.w),
+        mclog::tagWarn(kTag, "candidate jpeg decoded to {}x{}", static_cast<int>(dsc->header.w),
                        static_cast<int>(dsc->header.h));
+        return nullptr;
+    }
+    return image;
+}
+
+bool View::showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len)
+{
+    auto image = decodeCandidateJpeg(jpeg, len);
+    if (image == nullptr) {
         return false;
     }
     LvglLockGuard lock;
@@ -388,6 +401,53 @@ bool View::showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len)
     static const char* const kLabels[] = {str::kBtnSave, str::kBtnRetake};
     addButtons(kLabels, 2);
     return true;
+}
+
+void View::showShutterFlash()
+{
+    LvglLockGuard lock;
+    newPage();
+    // 白は「フラッシュ」の意味なので、背景色 (color::bg) とは別に明示する。
+    panel(*page_, page_->root(), Rect{0, 0, kScreenW, kScreenH}, lv_color_hex(0xFFFFFF));
+}
+
+bool View::prepareCapturedJpeg(const uint8_t* jpeg, size_t len)
+{
+    auto image = decodeCandidateJpeg(jpeg, len);
+    if (image == nullptr) {
+        return false;
+    }
+    LvglLockGuard lock;  // 前に用意したもの (表示していない) を差し替える
+    captured_image_ = std::move(image);
+    return true;
+}
+
+CapturedSource View::showCaptured(const char* title)
+{
+    LvglLockGuard lock;
+    newPage();
+    CapturedSource src = CapturedSource::None;
+    if (captured_image_ != nullptr) {
+        review_image_ = std::move(captured_image_);  // 以後は画面が持つ (newPage / end で解放)
+        auto& img     = page_->add<Image>(page_->root());
+        img.setSrc(review_image_->image_dsc());
+        img.align(LV_ALIGN_CENTER, 0, 0);
+        src = CapturedSource::Candidate;
+    } else if (preview_buf_ != nullptr && preview_has_frame_) {
+        // CAPTURE で最後に描いたフレームがバッファに残っている (取り込みは止めてあるので書き換わらない)。
+        auto& img = page_->add<Image>(page_->root());
+        img.setSrc(&preview_dsc_);
+        img.align(LV_ALIGN_CENTER, 0, 0);
+        src = CapturedSource::Preview;
+    }
+    titleBar(*page_, title);
+    return src;
+}
+
+void View::discardCapturedJpeg()
+{
+    LvglLockGuard lock;
+    captured_image_.reset();
 }
 
 void View::showReviewEmpty(const char* title, const char* text)

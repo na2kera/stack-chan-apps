@@ -59,6 +59,23 @@ app_photobooth/
 - PHOTO_QR: QR は `photo_url`、「削除予定 HH:MM」。X_QR: `share_url`。
 - 「判定なしで撮影」は UPLOADING で ERROR「PC未接続のため保存できません」。
 
+### シャッター演出（SHUTTER）
+
+edge の判定で自動採用されたときだけ、CAPTURE と UPLOADING の間に SHUTTER を挟む。REVIEW の「保存する」と「判定なしで撮影」の経路は変えない。
+
+```
+CAPTURE --(frame_result accepted)--> SHUTTER --(表示 ≥ CAPTURED_HOLD_MS かつ captured.wav 終了)--> UPLOADING
+```
+
+- 採用時（CAPTURE 内）: 候補 JPEG を依頼（`requestCandidate`）→ `review save` の順に送る。edge は公開が終わるとフレームを捨てる（candidate が 404）ので、候補を先に取りに行く。
+- 0 〜 `SHUTTER_FLASH_MS`（150 ms）: 全面を白にする（フラッシュ）。同時に `shutter.wav`（合成音 240 ms、`tools/make_shutter.py` で生成）を鳴らす。
+- フラッシュの後: 撮れた写真を全面に止めて表示し、タイトル帯「撮れたよ」を重ねる（ボタンなし）。
+  - 写真は edge の候補 JPEG（採用フレーム。REVIEW と同じ `jpeg_info` の検査とデコード）。フラッシュの終わりまでに届かない・取れない・デコードできないときは、CAPTURE で最後に描いたプレビューを止めたまま出す。表示中に候補が届いたら差し替える（表示時間は延ばさない）。
+- `shutter.wav` が終わったら `captured.wav`（「撮れたよ」）。写真の表示から `CAPTURED_HOLD_MS`（1000 ms）以上たち、かつ `captured.wav` が終わったら UPLOADING へ。UPLOADING は従来どおり「撮れたよ／写真を準備中」を出して `photo_ready` を待つ（`captured.wav` は鳴らし直さない）。
+- SHUTTER の間は frame_result を使わず（読み捨て）、CAPTURE の 10 秒の期限も見ない。取り込みは止める。
+- SHUTTER を抜けるまでに候補が届かなければ、届くか `EdgeClient` が諦めるまで受け取って捨てる。アプリを閉じたら他の状態と同じ後始末（`sessionCancel`、View が持つデコード結果の解放）。
+- ログ: SHUTTER への遷移、候補／プレビューのどちらを出したか、フラッシュ・音・表示の各時間。URL・鍵・画像は出さない。
+
 ## 4.5 レビュー round 1 で決めたこと
 
 - 判定つきの REVIEW は edge の候補 JPEG だけを表示する。取得・デコードできない、または 320x240 でないときは「候補の写真を表示できません」と「撮り直す」だけ（表示と保存対象をずらさない）。
@@ -72,7 +89,7 @@ app_photobooth/
 - [ ] `idf.py build`（`config_local.h` あり / なしの両方）。
 - [ ] 待機画面に「PC接続中」。edge を止めると 5〜10 秒で「PC未接続」、再起動で戻る。
 - [ ] 顔を出すと 1 秒で CAPTURE。左右にずらすと首が同じ方向へ（逆なら edge の `[head] gain_x` の符号）。
-- [ ] 1 人で笑うと「撮れたよ」→ 写真 QR をスマホのモバイル回線で開いて保存できる。X QR で投稿画面。
+- [ ] 1 人で笑うとシャッター音と白フラッシュ → 撮れた写真に「撮れたよ」（1 秒以上、声が終わるまで）→ 写真 QR をスマホのモバイル回線で開いて保存できる。X QR で投稿画面。
 - [ ] 目を閉じる／笑わないと採用されず、時間切れで候補が出る。顔なしで「顔が見つからなかったよ」。
 - [ ] アプリを閉じたあと純正アプリが正常。再度開いて撮影できる。
 - [ ] 送信 fps ≥ 2。

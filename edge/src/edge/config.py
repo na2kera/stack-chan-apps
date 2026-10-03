@@ -42,7 +42,7 @@ class CaptureConfig:
     margin_ratio: float = 0.08
     min_face_width_ratio: float = 0.08
     eye_blink_max: float = 0.25
-    mouth_smile_min: float = 0.55
+    mouth_smile_min: float = 0.35
     stable_frames: int = 2
     accept_consecutive: int = 2
     rgb565_byte_order: Literal["little", "big"] = "little"
@@ -52,8 +52,8 @@ class CaptureConfig:
 
 @dataclass(frozen=True)
 class HeadConfig:
-    gain_x: float = -0.05
-    gain_y: float = 0.05
+    gain_x: float = -0.3
+    gain_y: float = 0.3
     deadband_px: int = 16
     step_max: int = 30
     min_interval_ms: int = 500
