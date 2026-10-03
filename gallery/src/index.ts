@@ -1,5 +1,6 @@
 import { verifyGalleryKey } from "./auth";
-import { renderExpiredPage, renderNotFoundPage, renderPhotoPage } from "./pages";
+import { downloadFilename, renderExpiredPage, renderNotFoundPage, renderPhotoPage } from "./pages";
+import { SAVE_SCRIPT } from "./save-script";
 import { shareIntentUrl } from "./share";
 import {
   deleteExpired,
@@ -18,7 +19,9 @@ const PHOTO_HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
   "X-Robots-Tag": "noindex, nofollow",
-  "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+  // script と fetch は写真ページの保存ボタン (/save.js) 用。どちらも同一オリジンだけ。
+  "Content-Security-Policy":
+    "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'",
 };
 
 function json(body: unknown, status: number): Response {
@@ -90,11 +93,6 @@ async function upload(request: Request, env: Env): Promise<Response> {
   return json(uploadBody(request, env, photo.token, photo.metadata), photo.created ? 201 : 200);
 }
 
-function downloadFilename(capturedAt: string): string {
-  const compact = new Date(capturedAt).toISOString().replace(/[-:]/g, "").slice(0, 15);
-  return `stackchan-${compact}Z.jpg`;
-}
-
 async function photo(request: Request, env: Env, token: string, jpeg: boolean): Promise<Response> {
   if (!isToken(token)) return html(renderNotFoundPage(), 404);
   const stored = await getPhoto(env.PHOTOS, token);
@@ -115,6 +113,11 @@ async function fetchHandler(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/internal/photos") return upload(request, env);
   if (request.method === "GET" && url.pathname === "/share/x") {
     return Response.redirect(shareIntentUrl(env.SHARE_TEXT), 302);
+  }
+  if (request.method === "GET" && url.pathname === "/save.js") {
+    return new Response(SAVE_SCRIPT, {
+      headers: { ...PHOTO_HEADERS, "Content-Type": "text/javascript; charset=utf-8" },
+    });
   }
   if (url.pathname.startsWith("/p/") && request.method !== "GET") {
     return new Response("Method Not Allowed", { status: 405, headers: { ...PHOTO_HEADERS, Allow: "GET" } });
