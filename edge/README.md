@@ -21,6 +21,16 @@ cp config.example.toml config.toml      # 必要なら値を編集。config.toml
 `config.toml` が無いと `config.example.toml` を読んで警告を出す。
 device の鍵は `config.toml` の `[auth] device_key` か環境変数 `EDGE_DEVICE_KEY` (こちらが優先) に置く。HTTP gallery の共有鍵は環境変数 `GALLERY_KEY` にだけ置く。
 
+環境変数は `config.toml` より優先する (空文字は未設定扱い)。検査 (https 必須など) は上書きした後の値に 1 回だけかかるので、ファイル側が不完全でも環境変数で補えれば起動する。
+
+| 環境変数 | 上書きする設定 |
+| --- | --- |
+| `EDGE_DEVICE_KEY` | `[auth] device_key` |
+| `EDGE_DEVICE_ID` | `[auth] device_id` |
+| `GALLERY_KEY` | HTTP gallery の共有鍵 (環境変数にだけ置く。`http` モードでは必須) |
+| `GALLERY_URL` | `[gallery] url`。設定すると `mode` も `http` になる |
+| `EDGE_REQUIRE_DEVICE_KEY` | `1` なら、device_key が例の値 (`change-me`) のままのとき起動しない (終了コード 2)。未設定なら警告だけ。`Dockerfile` は `1` にしている |
+
 ## 起動
 
 ```console
@@ -65,7 +75,7 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | --- | --- | --- | --- |
 | server | host / port | 0.0.0.0 / 8765 | listen アドレス。LAN 内の PC アドレスを推奨 (0.0.0.0 は開発時のみ) |
 | server | max_sessions | 8 | 同時に保持するセッション数。超えたら一番長くイベントの無いセッションを追い出す (`session_evicted` をログに出す) |
-| auth | device_id / device_key | stackchan-01 / change-me | device の `X-Device-Id` / `X-Device-Key`。`EDGE_DEVICE_KEY` が優先 |
+| auth | device_id / device_key | stackchan-01 / change-me | device の `X-Device-Id` / `X-Device-Key`。`EDGE_DEVICE_ID` / `EDGE_DEVICE_KEY` が優先 |
 | capture | max_faces | 4 | 最大人数 (判定と UI の上限)。MediaPipe は max_faces + 1 人まで検出し、超えたら `too_many` で採用しない |
 | capture | countdown_sec | 10 | hello で device に返す撮影秒数 |
 | capture | margin_ratio | 0.08 | 上下左右の安全余白 (画像比) |
@@ -83,12 +93,25 @@ uv run python tools/webcam_device.py --edge http://127.0.0.1:8765 \
 | head | search_step | 20 | 顔が無いときの探索幅 (COMPOSE のみ、往復 2 回まで) |
 | head | x_min / x_max / y_min / y_max | -250 / 250 / 250 / 650 | 可動域。device の config.h と同じ値にする |
 | analysis | model_path | models/face_landmarker.task | config ファイルのあるディレクトリからの相対パス |
-| gallery | mode | mock | LAN 内モックは `mock`、公開 gallery は `http` |
+| gallery | mode | mock | LAN 内モックは `mock`、公開 gallery は `http`。`GALLERY_URL` を設定すると `http` |
 | gallery | ttl_minutes | 60 | 写真の保存期間。期限後は 410。**mock のみ** (`http` モードは `gallery/wrangler.jsonc` の `TTL_MINUTES`) |
 | gallery | public_base_url | "" | 写真 URL の先頭。空なら `http://<listen host>:<port>` (0.0.0.0 のときは推定した LAN アドレス) |
-| gallery | url | "" | `http` モードの公開 gallery URL (`https://` 必須)。共有鍵は環境変数 `GALLERY_KEY` から読む |
+| gallery | url | "" | `http` モードの公開 gallery URL (`https://` 必須)。`GALLERY_URL` が優先。共有鍵は環境変数 `GALLERY_KEY` から読む |
 | share | text | @na2kera_0510 の #ｽﾀｯｸﾁｬﾝ に撮ってもらいました！　#StackChan #STECHFES2026 #STECH | X 投稿画面に入れる本文。**mock のみ** (`http` モードは `gallery/wrangler.jsonc` の `SHARE_TEXT`) |
 | sticker | enabled / scale / outline / margin | true / 2 / 2 / 6 | 保存する写真の四隅 (ランダム) にｽﾀｯｸﾁｬﾝのドット絵を載せる。素材と権利表記は `src/edge/assets/README.md` |
+
+## コンテナで動かす (Cloudflare Containers)
+
+`Dockerfile` で edge をイメージにできる (ビルドコンテキストは `edge/`、linux/amd64)。モデルはビルド時に取得してイメージに入れ、設定は `config.example.toml` をそのまま使う。鍵と gallery の接続先は上の環境変数で渡す。手元の `config.toml` や `models/` は `.dockerignore` でイメージに入れない。
+
+```console
+docker build --platform linux/amd64 -t stackchan-edge edge
+docker run --rm -p 8765:8765 -e EDGE_DEVICE_KEY=<鍵> stackchan-edge   # GALLERY_URL が無ければ mock
+```
+
+`EDGE_DEVICE_KEY` を渡さないと起動しない (イメージは `EDGE_REQUIRE_DEVICE_KEY=1`)。`GALLERY_URL` なしの mock モードでは、写真 URL にコンテナのブリッジ網の IP が入りスマホからは開けない。起動と hello の確認用にだけ使う。
+
+Cloudflare Containers へのデプロイと前段の Worker は [edge-cloud/](../edge-cloud/README.md)、設計は [docs/design/step5-edge-cloud.md](../docs/design/step5-edge-cloud.md)。
 
 ## モック gallery について
 
