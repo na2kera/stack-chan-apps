@@ -5,7 +5,6 @@
  */
 #include "head.h"
 
-#include <hal/hal.h>
 #include <mooncake_log.h>
 #include <stackchan/stackchan.h>
 
@@ -42,9 +41,6 @@ int clampY(int y)
     return std::min(std::max(y, cfg::HEAD_Y_MIN), cfg::HEAD_Y_MAX);
 }
 
-// 純正 Motion は、HAL のバックグラウンドタスク (_stackchan_update_task) が LVGL のロックを持ったまま
-// 50 Hz で update() し、さらに待機中の首振り (IdleMotionModifier) や頭なで (HeadPetModifier) が
-// 同じ Motion に指示を出す。こちらから触るときも同じロックを取り、同時に書き換えないようにする。
 stackchan::motion::Motion& motion()
 {
     return GetStackChan().motion();
@@ -52,28 +48,18 @@ stackchan::motion::Motion& motion()
 
 }  // namespace
 
-uint32_t Head::kRetryMs()
-{
-    return cfg::HEAD_FAULT_RETRY_MS;
-}
-
 void Head::begin(uint32_t now_ms)
 {
-    faulted_  = false;
-    watching_ = false;
-    moving_   = false;
-    has_cmd_  = false;
-    active_   = true;
-
+    faulted_     = false;
+    watching_    = false;
+    moving_      = false;
+    has_cmd_     = false;
+    active_      = true;
     paused_      = false;
+    pending_     = false;
     fault_count_ = 0;
 
-    LvglLockGuard lock;
     auto& m = motion();
-    // 撮影中は純正の自動の首振り (待機中のランダムな首振り、頭なでの反応) を止める。これらは
-    // Motion の modify lock を見て何もしなくなる。止めないと首の取り合いになり、こちらの指示が
-    // 上書きされて「応答なし」と誤判定されていた (実機ログ: 頭タッチで開始した直後に約 4° ずれた)。
-    m.setModifyLock(true);
     // 撮影中は止まっても保持する (純正既定のトルク自動解放だと pitch が垂れてフレームがずれる)。
     m.setAutoTorqueReleaseEnabled(false);
     // 指示のたびに現在角からアニメーションを始める (純正の既定値。他アプリが変えていても戻す)。
@@ -88,16 +74,13 @@ void Head::end(uint32_t now_ms)
     if (!active_) {
         return;
     }
-    paused_ = false;  // 閉じるときは一時停止中でも正面に戻す
+    paused_  = false;  // 閉じるときは待っている途中でも正面に戻す
+    pending_ = false;
     if (!faulted_) {
-        // 低速の 1 指示で正面に戻す。戻りきる前にアプリが閉じても、純正のタスクが Motion を進める。
+        // 低速の 1 指示で正面に戻す。戻りきる前にアプリが閉じても、ランチャーが Motion を進める。
         neutral(now_ms);
     }
-    {
-        LvglLockGuard lock;
-        motion().setAutoTorqueReleaseEnabled(true);  // 純正の既定に戻す
-        motion().setModifyLock(false);               // 純正の自動の首振りを戻す
-    }
+    motion().setAutoTorqueReleaseEnabled(true);  // 純正の既定に戻す
     active_   = false;
     watching_ = false;
     mclog::tagInfo(kTag, "end: back to neutral, auto torque release restored");
@@ -108,11 +91,17 @@ void Head::update(uint32_t now_ms)
     if (!active_) {
         return;
     }
-    // Motion の update() は純正のバックグラウンドタスクが 50 Hz で呼んでいるので、ここでは呼ばない
-    // (別タスクから同時に進めない)。
+    // 純正 Motion は update() でアニメーションを 50 Hz で進める (内部で間引き済み)。
+    motion().update();
+
+    // 応答なしの後の待ちが終わったら、待っている間に来た最新の指示を送る。
     if (paused_ && now_ms - paused_since_ms_ >= cfg::HEAD_FAULT_RETRY_MS) {
         paused_ = false;
-        mclog::tagInfo(kTag, "resume head commands after pause ({} faults so far)", fault_count_);
+        mclog::tagInfo(kTag, "resume head commands after pause ({} faults in a row)", fault_count_);
+        if (pending_ && !faulted_) {
+            pending_ = false;
+            command(target_x_, target_y_, now_ms);
+        }
     }
 
     // 指示してから止まるまでの間だけ問い合わせる。止まった後の一時的な読み取り失敗
@@ -124,14 +113,7 @@ void Head::update(uint32_t now_ms)
         return;
     }
     last_poll_ms_ = now_ms;
-    {
-        LvglLockGuard lock;
-        // 純正の IMU の反応 (揺すったとき) は終わると modify lock を外すので、ここでかけ直す。
-        if (!motion().isModifyLocked()) {
-            motion().setModifyLock(true);
-        }
-        moving_ = motion().isMoving();
-    }
+    moving_       = motion().isMoving();
     if (moving_) {
         last_motion_ms_ = now_ms;
     }
@@ -144,17 +126,14 @@ void Head::update(uint32_t now_ms)
     if (now_ms - last_cmd_ms_ > cfg::HEAD_MOVE_TIMEOUT_MS) {
         // 目標の近くまで来ているなら、サーボが「動作中」を返し続けているだけとみなして続行する
         // (小さな移動や不感帯での微振動、ReadMove の読み取り失敗で起きる)。
-        int cur_x = 0;
-        int cur_y = 0;
-        {
-            LvglLockGuard lock;
-            cur_x = motion().getCurrentYawAngle();
-            cur_y = motion().getCurrentPitchAngle();
-        }
+        auto& m        = motion();
+        const int cur_x = m.getCurrentYawAngle();
+        const int cur_y = m.getCurrentPitchAngle();
         if (std::abs(cur_x - target_x_) <= cfg::HEAD_SETTLE_TOLERANCE &&
             std::abs(cur_y - target_y_) <= cfg::HEAD_SETTLE_TOLERANCE) {
-            watching_ = false;
-            moving_   = false;
+            watching_    = false;
+            moving_      = false;
+            fault_count_ = 0;  // 目標の近くまでは来ているので、応答なしには数えない
             mclog::tagWarn(kTag, "servo still reports moving {} ms after command, but at ({},{}) near target ({},{}); treat as settled",
                            now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_);
             return;
@@ -164,25 +143,24 @@ void Head::update(uint32_t now_ms)
         watching_ = false;
         moving_   = false;
         ++fault_count_;
-        {
-            LvglLockGuard lock;
-            motion().stop();
-        }
+        motion().stop();
         if (fault_count_ >= cfg::HEAD_FAULT_LIMIT) {
             faulted_ = true;
+            pending_ = false;
             mclog::tagError(kTag,
                             "servo not settling {} ms after command (at x={} y={}, target x={} y={}); {} times in a row, head disabled",
                             now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_, fault_count_);
         } else {
             paused_          = true;
+            pending_         = false;
             paused_since_ms_ = now_ms;
-            // 次の指示は今の実際の角度から始める (Motion は指示のたびに現在角へ合わせ直す)。
+            mclog::tagWarn(kTag,
+                           "servo not settling {} ms after command (at x={} y={}, target x={} y={}); pause {} ms and retry ({}/{})",
+                           now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_, cfg::HEAD_FAULT_RETRY_MS,
+                           fault_count_, cfg::HEAD_FAULT_LIMIT);
+            // 次の相対指示 (nudge) は今の実際の角度から積む。
             target_x_ = clampX(cur_x);
             target_y_ = clampY(cur_y);
-            mclog::tagWarn(kTag,
-                           "servo not settling {} ms after command (at x={} y={}); pause {} ms and retry ({}/{})",
-                           now_ms - last_cmd_ms_, cur_x, cur_y, cfg::HEAD_FAULT_RETRY_MS, fault_count_,
-                           cfg::HEAD_FAULT_LIMIT);
         }
     }
 }
@@ -194,13 +172,16 @@ void Head::command(int x, int y, uint32_t now_ms)
     last_cmd_ms_  = now_ms;
     last_poll_ms_ = now_ms;
     has_cmd_      = true;
-    if (faulted_ || (paused_ && now_ms - paused_since_ms_ < cfg::HEAD_FAULT_RETRY_MS)) {
+    if (faulted_) {
+        return;
+    }
+    if (paused_) {
+        pending_ = true;  // 待ちが終わったら update() がこの目標を送る
         return;
     }
     moving_         = true;  // 指示直後は動作中とみなす (次の update() で実測に置き換わる)
     watching_       = true;
     last_motion_ms_ = now_ms;
-    LvglLockGuard lock;
     motion().moveWithSpeed(target_x_, target_y_, cfg::HEAD_SPEED);
 }
 
@@ -220,8 +201,8 @@ bool Head::nudge(int dx, int dy, uint32_t now_ms)
     if (has_cmd_ && now_ms - last_cmd_ms_ < cfg::HEAD_STEP_INTERVAL_MS) {
         return false;
     }
-    if (paused_ && now_ms - paused_since_ms_ < cfg::HEAD_FAULT_RETRY_MS) {
-        return false;  // 応答なしの直後は少し待つ
+    if (paused_) {
+        return false;  // 顔追従の小さな指示は、待っている間は捨てる (古くなるので覚えない)
     }
     dx               = std::min(std::max(dx, -cfg::HEAD_STEP_MAX), cfg::HEAD_STEP_MAX);
     dy               = std::min(std::max(dy, -cfg::HEAD_STEP_MAX), cfg::HEAD_STEP_MAX);
