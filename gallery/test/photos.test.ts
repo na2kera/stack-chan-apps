@@ -129,28 +129,11 @@ describe("GET /p/<token>", () => {
     expect(page.headers.get("Referrer-Policy")).toBe("no-referrer");
     expect(page.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
     expect(page.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
-    // 保存ボタン: 写真アプリへ保存できるよう /save.js が画像を Web Share API で共有する
-    expect(html).toContain(`href="/p/${body.token}.jpg?download=1"`);
-    expect(html).toContain(`data-src="/p/${body.token}.jpg"`);
-    expect(html).toMatch(/data-filename="stackchan-20261001T053000Z\.jpg"/);
-    expect(html).toContain('<script src="/save.js"></script>');
-    expect(page.headers.get("Content-Security-Policy")).toContain("script-src 'self'");
-    expect(page.headers.get("Content-Security-Policy")).toContain("connect-src 'self'");
 
     const image = await SELF.fetch(`${body.photo_url}.jpg?download=1`);
     expect(image.status).toBe(200);
     expect(new Uint8Array(await image.arrayBuffer())).toEqual(JPEG);
     expect(image.headers.get("Content-Disposition")).toMatch(/^attachment; filename="stackchan-/);
-  });
-
-  it("保存ボタンのスクリプトを JavaScript として配信する", async () => {
-    const script = await SELF.fetch("https://gallery.test/save.js");
-    expect(script.status).toBe(200);
-    expect(script.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
-    expect(script.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-    const source = await script.text();
-    expect(source).toContain("navigator.share({ files: [file] })");
-    expect(() => new Function(source)).not.toThrow();
   });
 
   it("GET 以外にも共通ヘッダを付けて 405 にする", async () => {

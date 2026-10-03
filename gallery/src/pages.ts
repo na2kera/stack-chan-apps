@@ -37,17 +37,11 @@ const CREDIT =
   '作品ページ: <a href="https://github.com/stack-chan/stack-chan" rel="noreferrer">github.com/stack-chan/stack-chan</a><br>' +
   '写真のドット絵: <a href="https://github.com/meganetaaan/mouse-follower" rel="noreferrer">meganetaaan/mouse-follower</a> (MIT License)</p>';
 
-export function downloadFilename(capturedAt: string): string {
-  const compact = new Date(capturedAt).toISOString().replace(/[-:]/g, "").slice(0, 15);
-  return `stackchan-${compact}Z.jpg`;
-}
-
 export function renderPhotoPage(token: string, metadata: PhotoMetadata): string {
   const image = `/p/${token}.jpg`;
-  const filename = downloadFilename(metadata.captured_at);
   return page(
     "スタックチャンの写真",
-    `<h1>スタックチャンの写真</h1><img src="${image}" alt="写真"><a class="btn" id="save" href="${image}?download=1" data-src="${image}" data-filename="${filename}">写真を保存</a><p>削除予定: ${formatJst(metadata.expires_at)}（日本時間）</p><p class="note">この URL を知っている人は誰でも見られます。保存はお早めに</p>${CREDIT}<script src="/save.js"></script>`,
+    `<h1>スタックチャンの写真</h1><img src="${image}" alt="写真"><a class="btn" href="${image}?download=1">写真をダウンロード</a><p>削除予定: ${formatJst(metadata.expires_at)}（日本時間）</p><p class="note">この URL を知っている人は誰でも見られます。保存はお早めに</p>${CREDIT}`,
   );
 }
 
