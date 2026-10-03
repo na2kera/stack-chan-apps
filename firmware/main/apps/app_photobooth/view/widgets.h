@@ -57,7 +57,7 @@ lv_color_t muted();
 
 namespace font {
 const lv_font_t* body();   // 20px 日本語 (タイトル・本文・ボタン)
-const lv_font_t* large();  // 48px 数字 (残り秒数)
+const lv_font_t* large();  // 28px 数字 (残り秒数)
 }  // namespace font
 
 enum class Align : uint8_t { Left, Center };

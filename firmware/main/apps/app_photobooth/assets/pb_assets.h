@@ -15,7 +15,7 @@
 #include <cstdint>
 
 LV_FONT_DECLARE(pb_font_jp_20);   // 本文・タイトル・ボタン (ASCII + strings.h の文字)
-LV_FONT_DECLARE(pb_font_num_48);  // CAPTURE の残り秒数 (数字と '-')
+LV_FONT_DECLARE(pb_font_num_28);  // CAPTURE の残り秒数 (数字と '-')
 LV_IMAGE_DECLARE(icon_photobooth);
 
 extern const uint8_t pb_voice_announce_start[] asm("_binary_announce_wav_start");

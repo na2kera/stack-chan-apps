@@ -68,7 +68,7 @@ const lv_font_t* body()
 }
 const lv_font_t* large()
 {
-    return &pb_font_num_48;
+    return &pb_font_num_28;
 }
 }  // namespace font
 
