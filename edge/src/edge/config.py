@@ -41,7 +41,7 @@ class CaptureConfig:
     countdown_sec: int = 10
     margin_ratio: float = 0.08
     min_face_width_ratio: float = 0.08
-    eye_blink_max: float = 0.25
+    eye_blink_max: float = 0.45
     mouth_smile_min: float = 0.35
     stable_frames: int = 2
     accept_consecutive: int = 2
