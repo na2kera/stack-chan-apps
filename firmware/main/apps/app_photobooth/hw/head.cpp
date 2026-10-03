@@ -144,6 +144,9 @@ void Head::update(uint32_t now_ms)
         moving_   = false;
         ++fault_count_;
         motion().stop();
+        // 以後の targetX/Y (edge に「今のサーボ角」として送る) と相対指示は、今の実際の角度を基準にする。
+        target_x_ = clampX(cur_x);
+        target_y_ = clampY(cur_y);
         if (fault_count_ >= cfg::HEAD_FAULT_LIMIT) {
             faulted_ = true;
             pending_ = false;
@@ -158,23 +161,21 @@ void Head::update(uint32_t now_ms)
                            "servo not settling {} ms after command (at x={} y={}, target x={} y={}); pause {} ms and retry ({}/{})",
                            now_ms - last_cmd_ms_, cur_x, cur_y, target_x_, target_y_, cfg::HEAD_FAULT_RETRY_MS,
                            fault_count_, cfg::HEAD_FAULT_LIMIT);
-            // 次の相対指示 (nudge) は今の実際の角度から積む。
-            target_x_ = clampX(cur_x);
-            target_y_ = clampY(cur_y);
         }
     }
 }
 
 void Head::command(int x, int y, uint32_t now_ms)
 {
+    if (faulted_) {
+        // 首を止めた後は目標も変えない (targetX/Y は止まった実際の角度のまま edge に送る)。
+        return;
+    }
     target_x_     = clampX(x);
     target_y_     = clampY(y);
     last_cmd_ms_  = now_ms;
     last_poll_ms_ = now_ms;
     has_cmd_      = true;
-    if (faulted_) {
-        return;
-    }
     if (paused_) {
         pending_ = true;  // 待ちが終わったら update() がこの目標を送る
         return;
