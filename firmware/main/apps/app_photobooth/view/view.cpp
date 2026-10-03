@@ -30,7 +30,8 @@ constexpr const char* kTag = "PB-View";
 // COMPOSE / CAPTURE: 下端の案内帯
 constexpr Rect kBand{0, kScreenH - 40, kScreenW, 40};
 // CAPTURE: 右上の人数・残り秒数
-constexpr Rect kCaptureBox{kScreenW - 124, 0, 124, 84};
+// プレビューを隠しすぎないよう小さめにする (124x84 → 88x56)。上の行に人数、下に残り秒数。
+constexpr Rect kCaptureBox{kScreenW - 88, 0, 88, 56};
 
 constexpr Rect kBody{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - kButtonBarH - 8};
 constexpr Rect kBodyNoButtons{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - 8};
@@ -251,14 +252,14 @@ void View::showCapture(bool camera_ok)
     faces.setTextFont(font::body());
     faces.setTextColor(color::overlayText());
     faces.setText("");
-    faces.align(LV_ALIGN_TOP_MID, 0, 4);
+    faces.align(LV_ALIGN_TOP_MID, 0, 2);
     label_faces_ = faces.get();
 
     auto& remain = page_->add<Label>(box.get());
     remain.setTextFont(font::large());
     remain.setTextColor(color::overlayText());
     remain.setText("");
-    remain.align(LV_ALIGN_TOP_MID, 0, 30);
+    remain.align(LV_ALIGN_TOP_MID, 0, 24);
     label_remain_ = remain.get();
 
     // 案内帯は hint があるときだけ出す (setBand)。
@@ -294,10 +295,10 @@ void View::updateCaptureOverlay(int remaining_sec, int face_count, int target)
         snprintf(buf, sizeof(buf), "%s %d/%d", str::kFaceCountLabel, face_count, target);
     }
     lv_label_set_text(label_faces_, buf);
-    lv_obj_align(label_faces_, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(label_faces_, LV_ALIGN_TOP_MID, 0, 2);
     snprintf(buf, sizeof(buf), "%d", remaining_sec);
     lv_label_set_text(label_remain_, buf);
-    lv_obj_align(label_remain_, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_align(label_remain_, LV_ALIGN_TOP_MID, 0, 24);
 }
 
 void View::updatePreview(const uint16_t* pixels, int width, int height)

@@ -7,7 +7,7 @@
 # view/strings.h の文字列リテラルに出てくる文字 + ASCII だけを切り出した LVGL フォントを作る。
 #
 #   pb_font_jp_20.c  : 20px / 4bpp。ASCII (0x20-0x7E) + strings.h の非 ASCII 文字
-#   pb_font_num_48.c : 48px / 4bpp。CAPTURE の残り秒数用 (数字と '-' だけ)
+#   pb_font_num_28.c : 28px / 4bpp。CAPTURE の残り秒数用 (数字と '-' だけ)
 #
 #   ./tools/gen_font.sh        (firmware/ で idf.py build 済み = managed_components がある状態で)
 #
@@ -45,5 +45,5 @@ conv() {
 }
 
 conv --size 20 --bpp 4 -r 0x20-0x7E --symbols "$symbols" -o "$out/pb_font_jp_20.c"
-conv --size 48 --bpp 4 --symbols "0123456789-" -o "$out/pb_font_num_48.c"
-echo "wrote assets/pb_font_jp_20.c assets/pb_font_num_48.c"
+conv --size 28 --bpp 4 --symbols "0123456789-" -o "$out/pb_font_num_28.c"
+echo "wrote assets/pb_font_jp_20.c assets/pb_font_num_28.c"
