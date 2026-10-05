@@ -13,3 +13,4 @@
 #include "app_ezdata/app_ezdata.h"
 #include "app_dance/app_dance.h"
 #include "app_photobooth/app_photobooth.h"
+#include "app_roulette/app_roulette.h"
