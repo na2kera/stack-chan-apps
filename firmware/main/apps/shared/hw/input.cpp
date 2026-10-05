@@ -8,10 +8,10 @@
 #include <hal/hal.h>
 #include <mooncake_log.h>
 
-namespace photobooth::hw {
+namespace shared::hw {
 
 namespace {
-constexpr const char* kTag = "PB-Input";
+constexpr const char* kTag = "Input";
 }
 
 Input::Input()
@@ -116,4 +116,4 @@ void Input::clear()
     pressed_ = false;
 }
 
-}  // namespace photobooth::hw
+}  // namespace shared::hw

@@ -13,7 +13,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "../hw/input.h"
+#include "../../shared/hw/input.h"
 #include "jpeg_info.h"
 #include "strings.h"
 #include "widgets.h"
@@ -49,7 +49,7 @@ const char* idleLinkText(IdleLink link)
 
 }  // namespace
 
-View::View(hw::Input& input) : input_(input)
+View::View(shared::hw::Input& input) : input_(input)
 {
 }
 

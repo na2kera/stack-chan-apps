@@ -178,7 +178,7 @@ void Flow::enter(State next, uint32_t now_ms)
 
         case State::Announce:
             view_.showAnnounce(stateTitle(next));
-            if (!audio_.play(hw::Audio::Clip::Announce)) {
+            if (!audio_.play(clips_.get(hw::Clip::Announce))) {
                 mclog::tagWarn(kTag, "announce playback failed; continue without voice");
             }
             break;
@@ -220,9 +220,9 @@ void Flow::enter(State next, uint32_t now_ms)
                            config::CAPTURED_HOLD_MS, shutter_cand_ == ShutterCandidate::Waiting ? "requested" : "none");
             view_.showShutterFlash();
             shutter_sound_since_ms_ = now_ms;
-            if (audio_.play(hw::Audio::Clip::Shutter)) {
+            if (audio_.play(clips_.get(hw::Clip::Shutter))) {
                 shutter_sound_ = ShutterSound::Shutter;
-            } else if (audio_.play(hw::Audio::Clip::Captured)) {
+            } else if (audio_.play(clips_.get(hw::Clip::Captured))) {
                 mclog::tagWarn(kTag, "shutter: shutter sound unavailable; play captured voice");
                 shutter_sound_ = ShutterSound::Captured;
             } else {
@@ -249,7 +249,7 @@ void Flow::enter(State next, uint32_t now_ms)
             view_.showUploading(stateTitle(next), uploading_captured_);
             // 判定なしの撮影は保存できないので「撮れたよ」は言わない。再試行でも言い直さない。
             if (!uploading_quiet_ && !(kEdgeEnabled && !judged_)) {
-                audio_.play(hw::Audio::Clip::Captured);
+                audio_.play(clips_.get(hw::Clip::Captured));
             }
             uploading_quiet_ = false;
             break;
@@ -363,9 +363,9 @@ void Flow::failQr(uint32_t now_ms, const char* which)
     enter(State::Error, now_ms);
 }
 
-int Flow::buttonHit(const hw::Event& ev) const
+int Flow::buttonHit(const shared::hw::Event& ev) const
 {
-    if (ev.kind != hw::Event::Kind::Button || ev.screen != view_.screenId()) {
+    if (ev.kind != shared::hw::Event::Kind::Button || ev.screen != view_.screenId()) {
         return -1;  // 前の画面で押されたボタンは無視する
     }
     return ev.index;
@@ -391,7 +391,7 @@ void Flow::drainCandidate()
     }  // jpeg はここで解放される
 }
 
-void Flow::update(const hw::Event& ev, uint32_t now_ms)
+void Flow::update(const shared::hw::Event& ev, uint32_t now_ms)
 {
     head_.update(now_ms);
     if (exit_requested_) {
@@ -437,15 +437,15 @@ void Flow::update(const hw::Event& ev, uint32_t now_ms)
 
 // ---- IDLE (待機) -----------------------------------------------------------
 
-void Flow::updateIdle(const hw::Event& ev, uint32_t now_ms)
+void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
 {
     if (buttonHit(ev) == kBtnIdleExit) {
         requestExit("idle exit button");
         return;
     }
     // 起動指示 (タッチ) は待機でだけ受ける。画面はボタン以外どこを触っても良い。
-    const bool screen_tap = ev.kind == hw::Event::Kind::ScreenTap && ev.screen == view_.screenId();
-    if (screen_tap || ev.kind == hw::Event::Kind::HeadTap) {
+    const bool screen_tap = ev.kind == shared::hw::Event::Kind::ScreenTap && ev.screen == view_.screenId();
+    if (screen_tap || ev.kind == shared::hw::Event::Kind::HeadTap) {
         mclog::tagInfo(kTag, "start requested by {}", screen_tap ? "screen touch" : "head touch");
         if (!kEdgeEnabled) {
             // ステップ1と同じ固定フロー
@@ -621,7 +621,7 @@ void Flow::showHint(net::Hint hint, bool capture)
     }
     if (hint == net::Hint::Closer && !closer_played_) {
         closer_played_ = true;
-        audio_.play(hw::Audio::Clip::Closer);
+        audio_.play(clips_.get(hw::Clip::Closer));
     }
 }
 
@@ -713,7 +713,7 @@ void Flow::updateShutter(uint32_t now_ms)
         }
         mclog::tagInfo(kTag, "shutter: shutter sound {} ms; play captured voice", now_ms - shutter_sound_since_ms_);
         shutter_sound_since_ms_ = now_ms;
-        shutter_sound_ = audio_.play(hw::Audio::Clip::Captured) ? ShutterSound::Captured : ShutterSound::Done;
+        shutter_sound_ = audio_.play(clips_.get(hw::Clip::Captured)) ? ShutterSound::Captured : ShutterSound::Done;
     } else if (shutter_sound_ == ShutterSound::Captured &&
                (!audio_.isPlaying() || now_ms - shutter_sound_since_ms_ > kUploadingSoundGuardMs)) {
         if (audio_.isPlaying()) {
@@ -872,7 +872,7 @@ void Flow::showReviewNoFace()
     view_.showReviewEmpty(stateTitle(State::Review), str::kNoFace);
 }
 
-void Flow::updateReview(const hw::Event& ev, uint32_t now_ms)
+void Flow::updateReview(const shared::hw::Event& ev, uint32_t now_ms)
 {
     if (review_wait_ == ReviewWait::Timeout) {
         bool ok            = false;
@@ -994,7 +994,7 @@ void Flow::updateUploading(uint32_t now_ms)
 
 // ---- PHOTO_QR / X_QR -----------------------------------------------------
 
-void Flow::updatePhotoQr(const hw::Event& ev, uint32_t now_ms)
+void Flow::updatePhotoQr(const shared::hw::Event& ev, uint32_t now_ms)
 {
     const int hit = buttonHit(ev);
     if (hit == kBtnPhotoNext) {
@@ -1005,7 +1005,7 @@ void Flow::updatePhotoQr(const hw::Event& ev, uint32_t now_ms)
     }
 }
 
-void Flow::updateXQr(const hw::Event& ev, uint32_t now_ms)
+void Flow::updateXQr(const shared::hw::Event& ev, uint32_t now_ms)
 {
     const int hit = buttonHit(ev);
     if (hit == kBtnXBack) {
@@ -1020,7 +1020,7 @@ void Flow::updateXQr(const hw::Event& ev, uint32_t now_ms)
 
 // ---- ERROR ---------------------------------------------------------------
 
-void Flow::updateError(const hw::Event& ev, uint32_t now_ms)
+void Flow::updateError(const shared::hw::Event& ev, uint32_t now_ms)
 {
     const int hit = buttonHit(ev);
     if (error_kind_ == ErrorKind::Qr) {
@@ -1131,9 +1131,9 @@ void Flow::buildDiag(char* out, size_t len)
              str::kDiagErrorLabel, d.last_error[0] ? d.last_error : str::kDiagNone);
 }
 
-void Flow::updateDiag(const hw::Event& ev, uint32_t now_ms)
+void Flow::updateDiag(const shared::hw::Event& ev, uint32_t now_ms)
 {
-    if (ev.kind == hw::Event::Kind::HeadTap) {  // 戻る (ボタン帯は 2 つまで)
+    if (ev.kind == shared::hw::Event::Kind::HeadTap) {  // 戻る (ボタン帯は 2 つまで)
         enter(State::Idle, now_ms);
         return;
     }
