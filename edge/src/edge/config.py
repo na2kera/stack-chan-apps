@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -15,7 +16,12 @@ EDGE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = EDGE_DIR / "config.toml"
 EXAMPLE_CONFIG = EDGE_DIR / "config.example.toml"
 ENV_DEVICE_KEY = "EDGE_DEVICE_KEY"
+ENV_DEVICE_ID = "EDGE_DEVICE_ID"
 ENV_GALLERY_KEY = "GALLERY_KEY"
+ENV_GALLERY_URL = "GALLERY_URL"
+# "1" なら device_key が例の値 (change-me) のままでは起動しない。edge/Dockerfile が設定する
+ENV_REQUIRE_DEVICE_KEY = "EDGE_REQUIRE_DEVICE_KEY"
+EXAMPLE_DEVICE_KEY = "change-me"
 
 
 class ConfigError(ValueError):
@@ -175,20 +181,42 @@ def _validate(cfg: Config) -> None:
             raise ConfigError("[gallery] url must be https:// in http mode")
 
 
-def parse_config(raw: dict[str, Any], base_dir: Path = EDGE_DIR) -> Config:
+def _parse_unvalidated(raw: dict[str, Any], base_dir: Path) -> Config:
     unknown = set(raw) - set(_SECTIONS)
     if unknown:
         raise ConfigError(f"unknown sections: {sorted(unknown)}")
     parts = {name: _build(cls, raw.get(name, {}), name) for name, cls in _SECTIONS.items()}
-    cfg = Config(**parts, base_dir=base_dir)
+    return Config(**parts, base_dir=base_dir)
+
+
+def parse_config(raw: dict[str, Any], base_dir: Path = EDGE_DIR) -> Config:
+    cfg = _parse_unvalidated(raw, base_dir)
     _validate(cfg)
     return cfg
 
 
-def load_config(path: Path | None = None, env: dict[str, str] | None = None) -> Config:
+def _apply_env(cfg: Config, env: Mapping[str, str]) -> Config:
+    """環境変数で設定を上書きする (コンテナでは鍵と接続先を環境変数だけで渡す)。"""
+    auth = cfg.auth
+    if key := env.get(ENV_DEVICE_KEY):
+        auth = replace(auth, device_key=key)
+    if device_id := env.get(ENV_DEVICE_ID):
+        auth = replace(auth, device_id=device_id)
+    gallery = cfg.gallery
+    if gallery_key := env.get(ENV_GALLERY_KEY):
+        gallery = replace(gallery, key=gallery_key)
+    if gallery_url := env.get(ENV_GALLERY_URL):
+        # URL を渡したら公開 gallery を使う意図なので mode も http にする
+        gallery = replace(gallery, mode="http", url=gallery_url)
+    return replace(cfg, auth=auth, gallery=gallery)
+
+
+def load_config(path: Path | None = None, env: Mapping[str, str] | None = None) -> Config:
     """設定を読む。path 省略時は edge/config.toml、無ければ config.example.toml に警告付きで戻る。
 
-    環境変数 EDGE_DEVICE_KEY と GALLERY_KEY があれば各設定より優先する。
+    環境変数 EDGE_DEVICE_KEY / EDGE_DEVICE_ID / GALLERY_KEY / GALLERY_URL があれば
+    各設定より優先する。GALLERY_URL を設定すると [gallery] mode も "http" になる。
+    EDGE_REQUIRE_DEVICE_KEY=1 なら、device_key が例の値のままだと ConfigError (既定は警告だけ)。
     """
     env = os.environ if env is None else env
     if path is None:
@@ -201,16 +229,14 @@ def load_config(path: Path | None = None, env: dict[str, str] | None = None) -> 
             path = EXAMPLE_CONFIG
     with path.open("rb") as f:
         raw = tomllib.load(f)
-    cfg = parse_config(raw, base_dir=path.resolve().parent)
-    key = env.get(ENV_DEVICE_KEY)
-    if key:
-        cfg = replace(cfg, auth=replace(cfg.auth, device_key=key))
-    gallery_key = env.get(ENV_GALLERY_KEY)
-    if gallery_key:
-        cfg = replace(cfg, gallery=replace(cfg.gallery, key=gallery_key))
+    # 検査は環境変数で上書きした後に 1 回だけ (ファイル単体では不完全でも、環境変数で補えればよい)
+    cfg = _apply_env(_parse_unvalidated(raw, base_dir=path.resolve().parent), env)
+    _validate(cfg)
     if cfg.gallery.mode == "http" and not cfg.gallery.key:
         raise ConfigError("GALLERY_KEY is required in http mode")
-    if cfg.auth.device_key == "change-me":
+    if cfg.auth.device_key == EXAMPLE_DEVICE_KEY and env.get(ENV_REQUIRE_DEVICE_KEY) == "1":
+        raise ConfigError(f"device_key is the example value; set {ENV_DEVICE_KEY}")
+    if cfg.auth.device_key == EXAMPLE_DEVICE_KEY:
         log.warning(
             "device_key is the example value; set EDGE_DEVICE_KEY or config.toml",
             extra={"event": "config_default_key"},

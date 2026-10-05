@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import AUTH, DEVICE_ID, DEVICE_KEY, new_session_id
+from conftest import AUTH, DEVICE_ID, DEVICE_KEY, EDGE_DIR, new_session_id
 from fastapi.testclient import TestClient
 
 from edge.auth import verify_device
@@ -57,6 +57,82 @@ def test_env_key_overrides_config(tmp_path) -> None:
     p.write_text('[auth]\ndevice_id = "d"\ndevice_key = "from-file"\n')
     assert load_config(p, env={}).auth.device_key == "from-file"
     assert load_config(p, env={"EDGE_DEVICE_KEY": "from-env"}).auth.device_key == "from-env"
+
+
+def test_env_device_id_overrides_config(tmp_path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[auth]\ndevice_id = "from-file"\n')
+    assert load_config(p, env={}).auth.device_id == "from-file"
+    assert load_config(p, env={"EDGE_DEVICE_ID": "from-env"}).auth.device_id == "from-env"
+    # 空文字は未設定として扱う (コンテナに空の変数が渡っても設定ファイルの値を使う)
+    assert load_config(p, env={"EDGE_DEVICE_ID": ""}).auth.device_id == "from-file"
+
+
+def test_env_gallery_url_switches_to_http(tmp_path) -> None:
+    # edge-cloud のコンテナと同じ: config.example.toml (mock) を環境変数だけで http にする
+    p = tmp_path / "config.toml"
+    p.write_text('[gallery]\nmode = "mock"\n')
+    env = {"GALLERY_URL": "https://gallery.test", "GALLERY_KEY": "gallery-secret"}
+    cfg = load_config(p, env=env)
+    assert cfg.gallery.mode == "http"
+    assert cfg.gallery.url == "https://gallery.test"
+    assert cfg.gallery.key == "gallery-secret"
+    assert load_config(p, env={}).gallery.mode == "mock"
+
+
+def test_env_gallery_url_is_validated(tmp_path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[gallery]\nmode = "mock"\n')
+    with pytest.raises(ConfigError, match="https"):
+        load_config(p, env={"GALLERY_URL": "http://gallery.test", "GALLERY_KEY": "k"})
+    with pytest.raises(ConfigError, match="GALLERY_KEY"):
+        load_config(p, env={"GALLERY_URL": "https://gallery.test"})
+
+
+def test_env_gallery_url_completes_file_config(tmp_path) -> None:
+    # ファイル単体では不完全 (http なのに url なし) でも、環境変数で補えれば通す
+    p = tmp_path / "config.toml"
+    p.write_text('[gallery]\nmode = "http"\n')
+    env = {"GALLERY_URL": "https://gallery.test", "GALLERY_KEY": "k"}
+    assert load_config(p, env=env).gallery.url == "https://gallery.test"
+    with pytest.raises(ConfigError, match="url is required"):
+        load_config(p, env={"GALLERY_KEY": "k"})
+
+
+def test_env_gallery_url_replaces_invalid_file_url(tmp_path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[gallery]\nmode = "http"\nurl = "http://old.example"\n')
+    env = {"GALLERY_URL": "https://gallery.test", "GALLERY_KEY": "k"}
+    assert load_config(p, env=env).gallery.url == "https://gallery.test"
+    with pytest.raises(ConfigError, match="https"):
+        load_config(p, env={"GALLERY_KEY": "k"})
+
+
+def test_require_device_key_rejects_example_key() -> None:
+    # edge/Dockerfile は EDGE_REQUIRE_DEVICE_KEY=1。鍵を渡し忘れたら change-me で listen しない
+    example = EDGE_DIR / "config.example.toml"
+    with pytest.raises(ConfigError, match="EDGE_DEVICE_KEY"):
+        load_config(example, env={"EDGE_REQUIRE_DEVICE_KEY": "1"})
+    env = {"EDGE_REQUIRE_DEVICE_KEY": "1", "EDGE_DEVICE_KEY": "device-secret"}
+    assert load_config(example, env=env).auth.device_key == "device-secret"
+    # PC では従来どおり警告だけで起動する
+    assert load_config(example, env={}).auth.device_key == "change-me"
+    assert load_config(example, env={"EDGE_REQUIRE_DEVICE_KEY": "0"}).auth.device_key == "change-me"
+
+
+def test_example_config_with_container_env() -> None:
+    # edge/Dockerfile は config.example.toml を config.toml として焼き込み、残りは環境変数で渡す
+    env = {
+        "EDGE_DEVICE_KEY": "device-secret",
+        "EDGE_DEVICE_ID": "stackchan-02",
+        "GALLERY_URL": "https://gallery.test",
+        "GALLERY_KEY": "gallery-secret",
+    }
+    cfg = load_config(EDGE_DIR / "config.example.toml", env=env)
+    assert cfg.auth == AuthConfig(device_id="stackchan-02", device_key="device-secret")
+    assert (cfg.gallery.mode, cfg.gallery.url) == ("http", "https://gallery.test")
+    assert cfg.server.host == "0.0.0.0"
+    assert cfg.server.port == 8765
 
 
 def test_http_gallery_reads_key_from_env(tmp_path) -> None:

@@ -1,0 +1,19 @@
+{
+  "name": "stackchan-edge-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261003.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3",
+    "wrangler": "4.147.0"
+  }
+}
