@@ -35,15 +35,17 @@ idf.py flash
 
 ## Photobooth fork (na2kera/StackChan `photobooth` ブランチ)
 
-このフォークは純正ファームに写真撮影アプリ `main/apps/app_photobooth/` を足したもの。
-設計は親リポジトリ (photobooth) の `docs/design/fw-app-step1.md` と `docs/design/fw-app-step2.md` (edge 接続)。
+このフォークは純正ファームに写真撮影アプリ `main/apps/app_photobooth/` とスロット `main/apps/app_roulette/` を足したもの。
+設計は親リポジトリ (photobooth) の `docs/design/fw-app-step1.md` と `docs/design/fw-app-step2.md` (edge 接続)、
+`docs/design/app-roulette.md` (スロットと共通部品)。
 upstream との差分は次だけにしている。
 
 | 変更 | 場所 |
 | --- | --- |
-| アプリ本体 (ランチャーに「Photobooth」として最後に並ぶ) | `main/apps/app_photobooth/` |
-| アプリの登録 | `main/apps/apps.h` の include 1 行、`main/main.cpp` の `installApp` 1 行 |
-| セリフ WAV の埋め込み | `main/CMakeLists.txt` の `PHOTOBOOTH_VOICES` (`EMBED_FILES`) |
+| アプリ本体 (ランチャーの最後に「Photobooth」「Slot」の順で並ぶ) | `main/apps/app_photobooth/`, `main/apps/app_roulette/` |
+| 2 つのアプリで使う部品 (WAV 再生 `shared::hw::Audio`・頭部/画面タップ `shared::hw::Input`・素材の生成スクリプト) | `main/apps/shared/` (純正の `main/apps/common/` には手を入れない) |
+| アプリの登録 | `main/apps/apps.h` の include 各 1 行、`main/main.cpp` の `installApp` 各 1 行 (AppPhotobooth → AppRoulette の順で最後に足す) |
+| セリフ WAV の埋め込み | `main/CMakeLists.txt` の `PHOTOBOOTH_VOICES` / `ROULETTE_VOICES` (`EMBED_FILES`。ファイル名がシンボル名になるので、スロットの WAV は `rl_` 始まり) |
 | edge 通信なしでビルドするスイッチ | `main/CMakeLists.txt` の `PHOTOBOOTH_NO_EDGE` (`idf.py -DPHOTOBOOTH_NO_EDGE=1 build`) |
 | 起動時の自動ファーム更新を止める | `patches/xiaozhi-esp32.patch` (`xiaozhi-esp32/main/application.cc` の `CheckNewVersion()`) |
 
@@ -123,8 +125,15 @@ CMake のキャッシュに残るので、戻すときは `idf.py -DPHOTOBOOTH_N
 | セリフ (`assets/voice/*.wav`, 24 kHz / mono / 16-bit) | `main/apps/app_photobooth/tools/make_voice.sh` | macOS `say` (Kyoko), ffmpeg |
 | 日本語フォント (`assets/pb_font_*.c`) | `main/apps/app_photobooth/tools/gen_font.sh` | python3, npx (lv_font_conv 1.5.3)。`idf.py build` 済み (managed_components が必要) |
 | ランチャーのアイコン (`assets/icon_photobooth.c`) | `python3 main/apps/app_photobooth/tools/make_icon.py` | Pillow |
+| スロットの発話 (`assets/voice/rl_start.wav`, `rl_reach.wav`) | `main/apps/app_roulette/tools/make_voice.sh` | macOS `say` (Kyoko), ffmpeg |
+| スロットの日本語フォント (`assets/rl_font_jp_20.c`) | `main/apps/app_roulette/tools/gen_font.sh` | photobooth と同じ |
+| スロットのリール (`assets/rl_reel.c`, 72x288 RGB565) | `python3 main/apps/app_roulette/tools/make_reel.py` | rsvg-convert (librsvg), magick (ImageMagick) |
+| スロットのアイコン (`assets/icon_roulette.c`) | `python3 main/apps/app_roulette/tools/make_icon.py` | Pillow (無ければ `uv run --with pillow python3 ...`) |
 
-画面の文言は `main/apps/app_photobooth/view/strings.h` にまとめてある。文言を変えたら `gen_font.sh` で
+各アプリの `make_voice.sh` / `gen_font.sh` は `main/apps/shared/tools/` の同名スクリプトを呼ぶだけ
+(`shared/tools/gen_font.sh <strings.h> <出力.c> <px> [--ascii]`、`shared/tools/make_voice.sh <出力ディレクトリ> <名前> <文言>...`)。
+
+画面の文言は各アプリの `view/strings.h` にまとめてある。文言を変えたら `gen_font.sh` で
 フォントを作り直す (純正同梱の `font_puhui_basic_20_4` には一部のかな・漢字が無いため、
 同じ PuHuiTi 系の `puhui-common.ttf` から使う文字だけを切り出している)。
 

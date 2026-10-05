@@ -54,6 +54,7 @@ main/apps/shared/
 
 - `shared::hw::Audio`: `begin()` / `end()` / `play(const Pcm&)` / `isPlaying()` / `stop()` と、`static Pcm parseWav(start, end, name)`（public）。どの WAV があるかは知らない。再生タスク・切り離し（`g_detached`）・出力の無効化の取り決めは今のまま動かす。
 - app_photobooth 側: `hw/clips.h/.cpp` に `enum class Clip` と、`begin` 時に 4 本を `parseWav` して持つ薄い表（`photobooth::hw::Clips`）を置く。`flow.cpp` の `audio_.play(hw::Audio::Clip::X)` は `audio_.play(clips_.get(Clip::X))` 相当に置き換える。`play` の戻り値（WAV が不正なら false）と呼び出し順は変えない。
+  （実装: `Clips` は `AppPhotobooth` が持ち、`Audio::begin()` の直前に `Clips::begin()` を呼んで `Flow` のコンストラクタに渡す。WAV を調べる順番とログは以前と同じ）
 - ログのタグは `PB-Audio` → `Audio`、`PB-Input` → `Input`。
 
 ### Input の変更点
@@ -62,7 +63,7 @@ main/apps/shared/
 
 ### スクリプトの変更点
 
-- `shared/tools/gen_font.sh <strings.h> <出力.c> <px> [--ascii]`、`shared/tools/make_voice.sh <出力ディレクトリ> <名前> <文言> [<名前> <文言>...]` を本体にする。
+- `shared/tools/gen_font.sh <strings.h> <出力.c> <px> [--ascii]`（photobooth の数字フォントのため、strings.h の代わりに `--symbols <文字>` も受ける）、`shared/tools/make_voice.sh <出力ディレクトリ> <名前> <文言> [<名前> <文言>...]` を本体にする。
 - `app_photobooth/tools/gen_font.sh`・`make_voice.sh` はそれを呼ぶだけにする。**作り直した `pb_font_*.c` と `assets/voice/*.wav` が今のファイルとバイト単位で同じ**であることを確かめる（違ったら素材はコミットせず、スクリプトだけ直す）。
 
 ## 4. アプリ構成（`firmware/main/apps/app_roulette/`）
@@ -114,7 +115,7 @@ app_roulette/
   - `start(r0, r1, r2)`: 3 リールの開始シンボル（0〜3）を受けて回し始める。乱数はアプリ側が `esp_random() % 4` で渡す。
   - `stopReel(index)`: Spinning のときだけ効く。
   - `step()`: 1 フレーム進める。全リール停止で Result に移り、`win` を決める。Spinning 中は「止まったリールがちょうど 2 つで、その中央のシンボルが一致」のとき `reach = true`、それ以外は false（移植元 `onTimeChanged` と同じ。同じフレームで 3 つ止まったらリーチにせず結果へ）。
-  - `advance(now_ms)`: 前回からの経過を 33 ms 単位で `step()` に変換する。1 回の呼び出しで進めるのは最大 5 ステップ（アプリが止まっていた後に一気に進めない）。Spinning 以外では時刻だけ更新する。
+  - `advance(now_ms)`: 前回からの経過を 33 ms 単位で `step()` に変換する。1 回の呼び出しで進めるのは最大 5 ステップ（アプリが止まっていた後に一気に進めない。上限で切ったときは残りの遅れを捨てる）。Spinning 以外では時刻だけ更新する。最初の呼び出しも時刻を覚えるだけ。
 - 初期表示は移植元と同じくリール i の位置を `i * kSymbolSize` にずらす。
 
 ### hw/lights
@@ -169,8 +170,8 @@ y=240└────────────────────────
 | 部品 | 位置・大きさ | 色 |
 | --- | --- | --- |
 | 背景 | 全面 | `#12121a` |
-| リールの窓 | x = 40, 124, 208、y = 0、72x216 | ロゴの下地は白（移植元の PNG と同じ見え方） |
-| リールの枠 | 窓の外側 1px | 回転中 `#9a9ab8`、停止 `#5a5a70` |
+| リールの窓 | x = 40, 124, 208、y = 0、72x216 | 移植元の PNG と同じ見え方（暗い下地 `#0d0d12` に白地の丸いロゴ） |
+| リールの枠 | 窓の外側 1px（窓の `outline`。上辺は画面外） | 回転中 `#9a9ab8`、停止 `#5a5a70` |
 | ペイライン | x = 26〜294（幅 268）、y = 71〜72 と 143〜144 | 通常 `#8a7a3a`、当たり `#ffcc33` |
 | 状態の行 | y = 216〜240、中央寄せ | 通常 `#c8c8d8`、当たり `#ffcc33` |
 
@@ -180,11 +181,11 @@ y=240└────────────────────────
 | --- | --- |
 | Ready | `タップでスタート` |
 | Spinning | `タップで止める` |
-| Result（当たり） | `<ロゴ名> が揃った！`（技育展 / 技育祭 / 技育博 / 技育CAMP） |
+| Result（当たり） | `<ロゴ名> がそろった！`（技育展 / 技育祭 / 技育博 / 技育CAMP。「揃」はフォント元の `puhui-common.ttf` に無いのでかな） |
 | Result（はずれ） | `はずれ タップでもう一度` |
 
 - ロゴの並び（シートの上から 0=技育展, 1=技育祭, 2=技育博, 3=技育CAMP）は移植元と同じ。`make_reel.py` の並びと `strings.h` のロゴ名を揃える。
-- `rl_reel.c` は `rsvg-convert` で各 SVG を 72x72 にラスタライズし、白地に合成して RGB565 の C 配列にする（透過は持たない）。
+- `rl_reel.c` は移植元 `tools/build-assets.sh` と同じ作り方を 1.2 倍にしたもの: `rsvg-convert` で各 SVG を 67x67（移植元 56/60 の比率）にラスタライズし、`#0d0d12` の 72x72 のセルの中央に合成して RGB565 の C 配列にする（透過は持たない）。
 - ランチャーのアイコンは 188x150 / RGB565A8（純正・photobooth と同じ形式）。図柄はスロットの 3 リール。テーマ色は `0x6C5CE7` 系の紫（ランチャーの背景色。純正アプリや Photobooth の黄色と被らないもの）。
 
 ## 6. テスト

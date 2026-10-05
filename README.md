@@ -1,8 +1,10 @@
 # stack-chan-apps
 
-M5Stack StackChan K151 の純正ファームに追加する自作アプリ集。1 つ目は自動撮影アプリ (photobooth)。
+M5Stack StackChan K151 の純正ファームに追加する自作アプリ集。自動撮影アプリ (photobooth) と、技育スロット (roulette) が入っている。
 
 photobooth は、StackChan に「写真撮りたい」と話しかける（またはタッチする）と、首を動かして全員を画角に収め、全員が目を開けて笑った瞬間の写真を撮り、ダウンロード用 QR と X 投稿用 QR を表示する自動撮影アプリ。
+
+roulette は、Moddable 版の技育スロット ([na2kera/stack-chan-roulette](https://github.com/na2kera/stack-chan-roulette)) を純正ファームのアプリに移植したもの。画面または頭部タップで 3 リールが回り、画面の左／中央／右をタップしてそのリールを止める。中央の行に同じロゴが 3 つ揃えば当たり（設計は [docs/design/app-roulette.md](docs/design/app-roulette.md)）。
 
 仕様は [docs/spec.md](docs/spec.md)、設計は [docs/design/](docs/design/) を参照。
 
@@ -10,7 +12,8 @@ photobooth は、StackChan に「写真撮りたい」と話しかける（ま�
 
 ```
 firmware/  純正ファーム (m5stack/StackChan の firmware/ を git subtree で取り込み) + 自作アプリ
-           main/apps/app_photobooth/ が撮影アプリ。ルーレット (app_roulette) も今後ここに追加
+           main/apps/app_photobooth/ が撮影アプリ、main/apps/app_roulette/ がスロット、
+           main/apps/shared/ が 2 つのアプリで使う部品 (音声再生・入力・素材の生成スクリプト)
 device/    旧・独立ファーム (PlatformIO, Arduino-ESP32)。凍結: 参照用に残し、以後更新しない
 edge/      PC で動かす Python サービス (音声認識・顔判定・首振り計算)   ※ステップ2以降
 gallery/   公開 HTTPS の写真配布サービス                                 ※ステップ4以降
@@ -22,7 +25,7 @@ docs/      仕様・設計・通信契約
 
 ## ビルドと書き込み（純正ファーム内アプリ版）
 
-撮影アプリは `firmware/`（純正ファームの ESP-IDF プロジェクト）に入っている。純正のホーム画面・AI エージェント・既存アプリはそのまま残り、ランチャーに「Photobooth」が増える。詳細（フォークの差分、自動更新を止めた範囲、素材の作り直し）は [firmware/README.md](firmware/README.md) の「Photobooth fork」を参照。
+撮影アプリは `firmware/`（純正ファームの ESP-IDF プロジェクト）に入っている。スロットも同じプロジェクトに入っている。純正のホーム画面・AI エージェント・既存アプリはそのまま残り、ランチャーの最後に「Photobooth」と「Slot」が増える。詳細（フォークの差分、自動更新を止めた範囲、素材の作り直し）は [firmware/README.md](firmware/README.md) の「Photobooth fork」を参照。
 
 ```console
 cd firmware
