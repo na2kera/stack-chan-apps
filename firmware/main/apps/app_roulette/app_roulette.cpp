@@ -113,12 +113,14 @@ void AppRoulette::onRunning()
     // 2. ゲームを進め、リーチと結果の演出
     const Slot::Phase before = _slot->phase();
     _slot->advance(now);
-    if (_slot->reach() && !_reach_active) {
+    // 立ち上がりは takeReachStarted() で見る (1 回の advance() の中でリーチ → 全停止まで進んでも取りこぼさない)。
+    if (_slot->takeReachStarted()) {
         _reach_active = true;
         _lights->setReach(true);
         _audio->play(_voice_reach);
         mclog::tagInfo(getAppInfo().name, "reach");
-    } else if (!_slot->reach() && _reach_active) {
+    }
+    if (!_slot->reach() && _reach_active) {
         _reach_active = false;
         _lights->setReach(false);
     }

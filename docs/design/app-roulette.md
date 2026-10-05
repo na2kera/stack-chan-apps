@@ -114,8 +114,9 @@ app_roulette/
   - `phase()`: Ready / Spinning / Result。`win()`、`reach()`、`winSymbol()`。
   - `start(r0, r1, r2)`: 3 リールの開始シンボル（0〜3）を受けて回し始める。乱数はアプリ側が `esp_random() % 4` で渡す。
   - `stopReel(index)`: Spinning のときだけ効く。
-  - `step()`: 1 フレーム進める。全リール停止で Result に移り、`win` を決める。Spinning 中は「止まったリールがちょうど 2 つで、その中央のシンボルが一致」のとき `reach = true`、それ以外は false（移植元 `onTimeChanged` と同じ。同じフレームで 3 つ止まったらリーチにせず結果へ）。
-  - `advance(now_ms)`: 前回からの経過を 33 ms 単位で `step()` に変換する。1 回の呼び出しで進めるのは最大 5 ステップ（アプリが止まっていた後に一気に進めない。上限で切ったときは残りの遅れを捨てる）。Spinning 以外では時刻だけ更新する。最初の呼び出しも時刻を覚えるだけ。
+  - `step()`: 1 フレーム進める。全リール停止で Result に移り、`win` を決める。Spinning 中は「止まったリールがちょうど 2 つで、その中央のシンボルが一致」のとき `reach = true`、それ以外は false（移植元 `onTimeChanged` と同じ。同じフレームで 3 つ止まったらリーチにせず結果へ）。リーチの立ち上がりは `takeReachStarted()`（読むと消える）でも取れる。
+  - 回転中の位置は 0.1 px の格子に丸める。`15.6f` を足し続けた誤差が残ると、シンボルの境目で止めたときに `requestStop` の `ceil` が 1 つ先を選ぶため（移植元は整数の 13 px で誤差が出ない）。
+  - `advance(now_ms)`: 前回からの経過を 33 ms 単位で `step()` に変換する。1 回の呼び出しで進めるのは最大 5 ステップ（アプリが止まっていた後に一気に進めない。上限で切ったときは残りの遅れを捨てる）。Spinning 以外では時刻だけ更新する。最初の呼び出しと `start()` 直後の呼び出しも時刻を覚えるだけ（待機中の経過を回り始めに乗せない）。
 - 初期表示は移植元と同じくリール i の位置を `i * kSymbolSize` にずらす。
 
 ### hw/lights
@@ -138,7 +139,7 @@ app_roulette/
 - `onRunning`:
   1. `input.poll()` を 1 件処理する。`HeadTap` は Spinning 以外なら開始。`Button(i)` は Spinning なら `stopReel(i)`、それ以外なら開始。
   2. 開始時: `esp_random()` で 3 つのシンボルを決めて `slot.start()`、`lights.startRainbow()`、再生中でなければ「スタート」を鳴らす（移植元の「発話中に再スタートしたら重ねない」）。
-  3. `slot.advance(now)`。リーチの立ち上がりで `lights.setReach(true)` と「リーチ」の再生（1 回だけ）、立ち下がりで `setReach(false)`。Result に移ったら `lights.off()`。
+  3. `slot.advance(now)`。リーチの立ち上がり（`takeReachStarted()`。1 回の `advance` の中でリーチから全停止まで進んでも取りこぼさない）で `lights.setReach(true)` と「リーチ」の再生（1 回だけ）、立ち下がりで `setReach(false)`。Result に移ったら `lights.off()`。
   4. `lights.update(now)`、`view.render(slot)`、`view::update_home_indicator()`。
   5. 終了要求があれば `close()`。
 - `onClose`: 消灯、音声と入力を止める、ホームインジケータと画面を壊す。首・カメラ・Wi-Fi は触らない。
@@ -195,7 +196,8 @@ y=240└────────────────────────
   - `requestStop`: 最低 `kStopSlip` 滑ってシンボルの区切りで止まり、止まった位置が `kSymbolSize` の倍数。
   - 3 リールが揃えば `win`、揃わなければはずれ。
   - リーチ: 止まった 2 つが一致して 1 つ回っている間だけ true。停止順（0-1、0-2、1-2）によらない。全停止で false。
-  - Spinning 以外では `stopReel` が効かない。`advance` は 1 回で最大 5 ステップ。
+  - Spinning 以外では `stopReel` が効かない。`advance` は 1 回で最大 5 ステップ、`start()` 直後は進めない。
+  - シンボルの境目（30 ステップ後 = 位置 180）で止めると停止先が 216 になる。リーチの立ち上がりは全停止の後でも 1 回読める。
 - 共通化の確認: photobooth の素材（フォント・WAV）がバイト単位で変わらないこと、`idf.py build` が通ること。
 - 実機（ユーザーが確認する）: 下の受け入れチェック。
 

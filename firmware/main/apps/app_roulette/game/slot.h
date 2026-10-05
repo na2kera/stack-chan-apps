@@ -70,6 +70,9 @@ public:
     {
         return reach_;
     }
+    // 前回の呼び出しの後にリーチが始まったか (読むと消える)。advance() が 1 回で複数ステップ進めて、
+    // リーチになった直後に 3 つ目が止まった場合でも、演出を出す側が立ち上がりを取りこぼさない。
+    bool takeReachStarted();
     // 揃ったシンボル (win() のときだけ。それ以外は -1)。
     int winSymbol() const;
     const Reel& reel(int index) const
@@ -78,6 +81,7 @@ public:
     }
 
     // 3 リールの開始シンボル (0〜3) を受けて回し始める。範囲外は kSymbolCount で丸める。
+    // 次の advance() は時刻を覚えるだけになる (開始前の経過を回り始めに乗せない)。
     void start(int r0, int r1, int r2);
     // リール index に止める指示を出す。Spinning のときだけ効く。指示を受け付けたら true。
     bool stopReel(int index);
@@ -92,8 +96,9 @@ private:
     Phase phase_      = Phase::Ready;
     bool win_         = false;
     bool reach_       = false;
+    bool reach_started_ = false;  // リーチの立ち上がり (takeReachStarted() で読むまで残る)
     uint32_t last_ms_ = 0;      // 最後に step() に換算した時刻
-    bool has_time_    = false;  // last_ms_ が有効か (最初の advance() では進めない)
+    bool has_time_    = false;  // last_ms_ が有効か (最初と start() 直後の advance() では進めない)
 };
 
 }  // namespace roulette::game

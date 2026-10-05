@@ -43,7 +43,9 @@ bool Reel::requestStop()
 void Reel::update()
 {
     if (phase == Phase::Spinning) {
-        position = normalize(position + kSpinSpeed);
+        // 0.1 px の格子に丸める。15.6f を足し続けた誤差 (例: 30 ステップで 180.00008) が残ると、
+        // requestStop() の ceil がシンボルの境目で 1 つ先を選んでしまう (移植元は整数の 13 px なので誤差が出ない)。
+        position = normalize(std::round((position + kSpinSpeed) * 10.0f) / 10.0f);
         return;
     }
     if (phase != Phase::Stopping) {
@@ -81,9 +83,19 @@ void Slot::start(int r0, int r1, int r2)
         const int s = ((symbols[i] % kSymbolCount) + kSymbolCount) % kSymbolCount;
         reels_[i].start(s);
     }
-    phase_ = Phase::Spinning;
-    win_   = false;
-    reach_ = false;
+    phase_         = Phase::Spinning;
+    win_           = false;
+    reach_         = false;
+    reach_started_ = false;
+    // 待機中の経過を回り始めに乗せない。次の advance() は時刻を覚えるだけにして、その 33 ms 後から進める。
+    has_time_ = false;
+}
+
+bool Slot::takeReachStarted()
+{
+    const bool started = reach_started_;
+    reach_started_     = false;
+    return started;
 }
 
 bool Slot::stopReel(int index)
@@ -122,8 +134,12 @@ void Slot::step()
         phase_ = Phase::Result;
         return;
     }
-    reach_ = count == 2 &&
-             paylineSymbol(reels_[stopped[0]].position) == paylineSymbol(reels_[stopped[1]].position);
+    const bool reach = count == 2 &&
+                       paylineSymbol(reels_[stopped[0]].position) == paylineSymbol(reels_[stopped[1]].position);
+    if (reach && !reach_) {
+        reach_started_ = true;
+    }
+    reach_ = reach;
 }
 
 int Slot::advance(uint32_t now_ms)

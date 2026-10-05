@@ -279,6 +279,11 @@ void testAdvance()
 
     slot.start(0, 1, 2);
     const float p0 = slot.reel(0).position;
+    // start() の直後は時刻を覚えるだけ (待機中の経過を回り始めに乗せない)。
+    expectEqual(slot.advance(5000 + 100 * kFrameMs), 0, "first advance after start only records time");
+    expectTrue(slot.reel(0).position == p0, "no movement on the first advance after start");
+    slot.start(0, 1, 2);
+    expectEqual(slot.advance(5000), 0, "first advance after start only records time (2)");
     // 前回 (5000) から 32 ms: まだ 1 ステップに満たない。
     expectEqual(slot.advance(5032), 0, "32 ms is less than one frame");
     // 66 ms: 2 ステップ。
@@ -298,6 +303,7 @@ void testAdvance()
     Slot wrap;
     wrap.advance(UINT32_MAX - 10);
     wrap.start(0, 0, 0);
+    wrap.advance(UINT32_MAX - 10);
     expectEqual(wrap.advance(UINT32_MAX - 10 + kFrameMs), 1, "advance across millis wrap-around");
 
     // 結果に移ったら途中で止める。
@@ -318,6 +324,59 @@ void testAdvance()
     expectEqual(fin.advance(now + 10 * kFrameMs), 0, "no steps in Result");
 }
 
+// 15.6 px を足し続けた誤差で、シンボルの境目での停止先が 1 つ先にずれないこと。
+void testStopOnSymbolBoundary()
+{
+    // シンボル 0 から 30 ステップ = 468 px = 288 + 180。位置はちょうど 180 のはず。
+    Reel reel;
+    reel.start(0);
+    for (int i = 0; i < 30; ++i) {
+        reel.update();
+    }
+    expectTrue(reel.position == 180.0f, "position after 30 steps is exactly 180");
+    reel.requestStop();
+    // (180 + 36) / 72 = 3 ちょうど → 停止先は 216 (288 ではない)。
+    expectTrue(reel.target == 216.0f, "stop target on a symbol boundary is 216");
+    runUntilStopped(reel);
+    expectTrue(reel.position == 216.0f, "stops at 216");
+
+    // 回転中の位置は 0.1 px の格子に乗っている。
+    Reel grid;
+    grid.start(1);
+    for (int i = 0; i < 1000; ++i) {
+        grid.update();
+        const float tenths = grid.position * 10.0f;
+        expectTrue(std::fabs(tenths - std::round(tenths)) < 1e-2f, "spinning position stays on the 0.1 px grid");
+    }
+}
+
+// 1 回の advance() の中でリーチ → 全停止まで進んでも、リーチの立ち上がりを取りこぼさない。
+void testReachStartedLatch()
+{
+    Slot slot;
+    slot.start(0, 0, 0);
+    expectTrue(!slot.takeReachStarted(), "no reach right after start");
+    slot.stopReel(0);
+    slot.stopReel(1);
+    stepUntilReelStopped(slot, 0);
+    stepUntilReelStopped(slot, 1);
+    expectTrue(slot.reach(), "reach with two matching reels stopped");
+    slot.stopReel(2);
+    stepUntilReelStopped(slot, 2);
+    expectTrue(slot.phase() == Slot::Phase::Result, "result after the third reel");
+    expectTrue(!slot.reach(), "reach cleared in result");
+    expectTrue(slot.takeReachStarted(), "reach start is latched until read");
+    expectTrue(!slot.takeReachStarted(), "latch is cleared by reading");
+    // 次のゲームに持ち越さない。
+    slot.start(0, 0, 0);
+    slot.stopReel(0);
+    slot.stopReel(1);
+    stepUntilReelStopped(slot, 0);
+    stepUntilReelStopped(slot, 1);
+    slot.start(0, 1, 2);
+    expectTrue(!slot.takeReachStarted(), "latch is cleared by start");
+}
+
 }  // namespace
 
 int main()
@@ -329,6 +388,8 @@ int main()
     testStopOnlyWhileSpinning();
     testInitialPositions();
     testAdvance();
+    testStopOnSymbolBoundary();
+    testReachStartedLatch();
     std::cout << "roulette_slot_test: ok\n";
     return 0;
 }
