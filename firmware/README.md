@@ -27,6 +27,26 @@ cmake --build build-host-tests
 ctest --test-dir build-host-tests --output-on-failure
 ```
 
+（フォークで追加）自作アプリのハードに依存しないロジックも同じ手順でテストする。約束事は
+`.claude/skills/firmware-testable-design/SKILL.md`、CI では `.github/workflows/ci.yml` の `firmware-tests` が走る。
+
+| テスト | 対象 |
+| --- | --- |
+| `motion_math_test` | 純正 `main/stackchan/motion/motion_math` |
+| `roulette_slot_test` | `app_roulette/game/slot` (スロットの状態) |
+| `light_pattern_test` | `app_roulette/hw/light_pattern` (頭部 LED の色) |
+| `wav_test` | `shared/wav` (埋め込み WAV のヘッダ) |
+| `jpeg_info_test` | `app_photobooth/view/jpeg_info` (JPEG のヘッダ) |
+| `edge_parse_test` | `app_photobooth/net/edge_parse` (edge の応答の解釈) |
+| `head_logic_test` | `app_photobooth/hw/head_logic` (首の応答監視。サーボは偽物) |
+| `time_format_test` | `app_photobooth/flow/time_format` (写真の期限の表示) |
+
+- `edge_parse_test` は ArduinoJson を使う。`components/ArduinoJson` (`fetch_repos.py` が取る) があればそれを、
+  無ければ CMake の `FetchContent` で `repos.json` と同じ v7.4.2 を取る (初回はネットワークが要る)。
+- macOS でリンクに失敗する (MacOSX27 SDK の `.tbd` を読めない) ときは、
+  `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk` を付けて `cmake -S tests ...` からやり直す。
+- ビルド先はリポジトリの外 (例: `/tmp/stackchan-tests`) にしてよい。
+
 ### Flash
 
 ```bash

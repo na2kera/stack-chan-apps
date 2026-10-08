@@ -13,6 +13,7 @@ jobs:
       edge: ${{ steps.filter.outputs.edge }}
       gallery: ${{ steps.filter.outputs.gallery }}
       edge-cloud: ${{ steps.filter.outputs.edge-cloud }}
+      firmware: ${{ steps.filter.outputs.firmware }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -30,6 +31,10 @@ jobs:
               - '.github/workflows/ci.yml'
             edge-cloud:
               - 'edge-cloud/**'
+              - '.github/workflows/ci.yml'
+            firmware:
+              - 'firmware/main/**'
+              - 'firmware/tests/**'
               - '.github/workflows/ci.yml'
 
   device-build:
@@ -55,6 +60,21 @@ jobs:
         run: |
           cp include/config.example.h include/config.h
           pio run
+
+  # firmware/ のホストテスト (ESP-IDF なし。.claude/skills/firmware-testable-design/SKILL.md §3)。
+  # fetch_repos.py は実行しないので、ArduinoJson は tests/CMakeLists.txt が FetchContent で取る。
+  firmware-tests:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S firmware/tests -B build-host-tests
+      - name: Build
+        run: cmake --build build-host-tests
+      - name: Test
+        run: ctest --test-dir build-host-tests --output-on-failure
 
   edge-test:
     needs: changes
