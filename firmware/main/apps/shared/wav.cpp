@@ -55,8 +55,12 @@ Status parse(const uint8_t* data, size_t len, uint32_t rate, Pcm& out)
             out.samples = size / 2;
             return Status::Ok;
         }
-        // チャンクは 2 バイト境界に詰められる (奇数サイズなら 1 バイトの詰め物)
+        // チャンクは 2 バイト境界に詰められる (奇数サイズなら 1 バイトの詰め物)。
+        // 詰め物が無いまま終わるファイルでは pos が len を 1 超えるので、次のループの len - pos を巻き戻らせない。
         pos += 8 + size + (size & 1);
+        if (pos > len) {
+            break;
+        }
     }
     return Status::NotFound;
 }

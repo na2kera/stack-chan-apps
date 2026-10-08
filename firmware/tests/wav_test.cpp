@@ -268,6 +268,15 @@ void testNotFound()
         bytes.insert(bytes.end(), {'d', 'a', 't', 'a', 4});
         expectStatus(run(bytes, out), Status::NotFound, "truncated chunk header");
     }
+    {
+        // 奇数サイズのチャンクで終わり、詰め物の 1 バイトが無い (pos が len を 1 超える)。
+        // 範囲外を読まずに NotFound で終わること (len - pos の巻き戻りの回帰テスト)。
+        WavBuilder b;
+        b.fmt(1, 1, kRate, 16);
+        std::vector<uint8_t> bytes = b.bytes();
+        bytes.insert(bytes.end(), {'L', 'I', 'S', 'T', 1, 0, 0, 0, 0x42});
+        expectStatus(run(bytes, out), Status::NotFound, "odd chunk without padding at the end");
+    }
 }
 
 }  // namespace
