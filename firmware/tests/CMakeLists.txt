@@ -89,3 +89,17 @@ target_include_directories(edge_parse_test PRIVATE
 target_compile_features(edge_parse_test PRIVATE cxx_std_17)
 
 add_test(NAME edge_parse_test COMMAND $<TARGET_FILE:edge_parse_test>)
+
+# app_photobooth の hw/head_logic (首の応答監視。サーボは偽物)
+add_executable(head_logic_test
+    head_logic_test.cpp
+    ../main/apps/app_photobooth/hw/head_logic.cpp
+)
+
+target_include_directories(head_logic_test PRIVATE
+    ../main
+)
+
+target_compile_features(head_logic_test PRIVATE cxx_std_17)
+
+add_test(NAME head_logic_test COMMAND $<TARGET_FILE:head_logic_test>)
