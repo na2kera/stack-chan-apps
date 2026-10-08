@@ -13,6 +13,7 @@
 
 #include "../config.h"
 #include "../view/strings.h"
+#include "time_format.h"
 
 namespace photobooth {
 
@@ -78,16 +79,6 @@ const char* capturedName(view::CapturedSource src)
             break;
     }
     return "no image";
-}
-
-// "2026-09-30T22:00:00+09:00" → "22:00"。形が違えば "--:--"。
-void formatExpires(const char* iso, char* out, size_t len)
-{
-    if (iso == nullptr || strlen(iso) < 16 || iso[10] != 'T' || iso[13] != ':') {
-        snprintf(out, len, "%s", str::kExpiresUnknown);
-        return;
-    }
-    snprintf(out, len, "%.5s", iso + 11);
 }
 
 }  // namespace
@@ -972,7 +963,7 @@ void Flow::updateUploading(uint32_t now_ms)
                 }
                 snprintf(photo_url_, sizeof(photo_url_), "%s", info.photo_url);
                 snprintf(share_url_, sizeof(share_url_), "%s", info.share_url);
-                formatExpires(info.expires_at, expires_at_, sizeof(expires_at_));
+                flow::formatExpires(info.expires_at, expires_at_, sizeof(expires_at_));
                 photo_ready_ = true;
             } else if (now_ms - state_since_ms_ >= config::UPLOAD_WAIT_MS) {
                 failUpload(now_ms, "timeout");

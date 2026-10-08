@@ -117,3 +117,17 @@ target_include_directories(light_pattern_test PRIVATE
 target_compile_features(light_pattern_test PRIVATE cxx_std_17)
 
 add_test(NAME light_pattern_test COMMAND $<TARGET_FILE:light_pattern_test>)
+
+# app_photobooth の flow/time_format (写真の期限の表示)
+add_executable(time_format_test
+    time_format_test.cpp
+    ../main/apps/app_photobooth/flow/time_format.cpp
+)
+
+target_include_directories(time_format_test PRIVATE
+    ../main
+)
+
+target_compile_features(time_format_test PRIVATE cxx_std_17)
+
+add_test(NAME time_format_test COMMAND $<TARGET_FILE:time_format_test>)
