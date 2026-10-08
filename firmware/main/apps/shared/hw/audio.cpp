@@ -12,6 +12,8 @@
 #include <hal/board/config.h>
 #include <mooncake_log.h>
 
+#include "../wav.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -28,15 +30,6 @@ constexpr size_t kChunkSamples   = kSampleRate / 50;          // 20 ms
 constexpr int kTailSilenceChunks = 2;  // 鳴らし終わりに 40 ms の無音を流して DMA の残りを押し出す
 constexpr uint32_t kTaskStack    = 4096;
 constexpr UBaseType_t kTaskPrio  = 4;
-
-uint32_t le32(const uint8_t* p)
-{
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
-}
-uint16_t le16(const uint8_t* p)
-{
-    return p[0] | (p[1] << 8);
-}
 
 }  // namespace
 
@@ -83,45 +76,28 @@ void taskEntry(void* arg)
 
 Audio::Pcm Audio::parseWav(const uint8_t* start, const uint8_t* end, const char* name)
 {
-    Pcm pcm;
-    pcm.name         = name;
-    const size_t len = static_cast<size_t>(end - start);
-    if (len < 12 || std::memcmp(start, "RIFF", 4) != 0 || std::memcmp(start + 8, "WAVE", 4) != 0) {
-        mclog::tagError(kTag, "{}: not a RIFF/WAVE file", name);
-        return pcm;
-    }
-    bool fmt_ok = false;
-    size_t pos  = 12;
-    while (pos + 8 <= len) {
-        const uint8_t* chunk = start + pos;
-        const uint32_t size  = le32(chunk + 4);
-        const uint8_t* body  = chunk + 8;
-        if (pos + 8 + size > len) {
-            break;
-        }
-        if (std::memcmp(chunk, "fmt ", 4) == 0 && size >= 16) {
-            const uint16_t format   = le16(body);
-            const uint16_t channels = le16(body + 2);
-            const uint32_t rate     = le32(body + 4);
-            const uint16_t bits     = le16(body + 14);
-            if (format != 1 || channels != 1 || bits != 16 || rate != static_cast<uint32_t>(kSampleRate)) {
-                mclog::tagError(kTag, "{}: unsupported format (fmt={} ch={} rate={} bits={}); need PCM mono 16-bit {} Hz",
-                                name, format, channels, rate, bits, kSampleRate);
-                return pcm;
-            }
-            fmt_ok = true;
-        } else if (std::memcmp(chunk, "data", 4) == 0) {
-            if (!fmt_ok) {
-                break;
-            }
-            pcm.data    = body;
-            pcm.samples = size / 2;
+    wav::Pcm parsed;
+    const auto status =
+        wav::parse(start, static_cast<size_t>(end - start), static_cast<uint32_t>(kSampleRate), parsed);
+    switch (status) {
+        case wav::Status::Ok: {
+            Pcm pcm{parsed.data, parsed.samples, name};
             mclog::tagInfo(kTag, "{}: {} samples ({} ms)", name, pcm.samples, pcm.samples * 1000 / kSampleRate);
             return pcm;
         }
-        pos += 8 + size + (size & 1);
+        case wav::Status::NotRiff:
+            mclog::tagError(kTag, "{}: not a RIFF/WAVE file", name);
+            break;
+        case wav::Status::Unsupported: {
+            const auto& f = parsed.format;
+            mclog::tagError(kTag, "{}: unsupported format (fmt={} ch={} rate={} bits={}); need PCM mono 16-bit {} Hz",
+                            name, f.format, f.channels, f.rate, f.bits, kSampleRate);
+            break;
+        }
+        case wav::Status::NotFound:
+            mclog::tagError(kTag, "{}: fmt/data chunk not found", name);
+            break;
     }
-    mclog::tagError(kTag, "{}: fmt/data chunk not found", name);
     return Pcm{nullptr, 0, name};
 }
 

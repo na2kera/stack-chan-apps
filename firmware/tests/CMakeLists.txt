@@ -30,3 +30,17 @@ target_include_directories(roulette_slot_test PRIVATE
 target_compile_features(roulette_slot_test PRIVATE cxx_std_17)
 
 add_test(NAME roulette_slot_test COMMAND $<TARGET_FILE:roulette_slot_test>)
+
+# shared/wav (埋め込み WAV のヘッダ解析)
+add_executable(wav_test
+    wav_test.cpp
+    ../main/apps/shared/wav.cpp
+)
+
+target_include_directories(wav_test PRIVATE
+    ../main
+)
+
+target_compile_features(wav_test PRIVATE cxx_std_17)
+
+add_test(NAME wav_test COMMAND $<TARGET_FILE:wav_test>)
