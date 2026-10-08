@@ -66,7 +66,7 @@ description: firmware/ の自作アプリ (main/apps/) を書く・直すとき�
 1. ロジック層に禁止 include が入っていないことを確かめる:
 
    ```console
-   grep -rlE '<hal/hal\.h>|freertos/|lvgl\.h|smooth_lvgl|mooncake|esp_[a-z_]+\.h' firmware/main/apps/*/game firmware/main/apps/shared/wav.* firmware/main/apps/app_photobooth/view/jpeg_info.*
+   grep -rlE '<hal/hal\.h>|freertos/|lvgl\.h|smooth_lvgl|mooncake|esp_[a-z_]+\.h' firmware/main/apps/*/game firmware/main/apps/shared/wav.* firmware/main/apps/app_photobooth/view/jpeg_info.* firmware/main/apps/app_photobooth/hw/head_logic.* firmware/main/apps/app_photobooth/net/edge_parse.* firmware/main/apps/app_photobooth/net/edge_types.h firmware/main/apps/app_photobooth/flow/time_format.* firmware/main/apps/app_roulette/hw/light_pattern.*
    ```
 
    （ロジック層のディレクトリを足したらここにも足す。）

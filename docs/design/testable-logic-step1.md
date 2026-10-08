@@ -32,7 +32,7 @@
 
 ## 3. 切り出し A・B: WAV と JPEG のヘッダ解析（作り直しなし）
 
-### A. `shared::wav::parse`（実装済み。テストと `Audio::parseWav` の置き換えが残り）
+### A. `shared::wav::parse`（実装済み）
 
 - `wav.h/.cpp` は書いてある。`Audio::parseWav(start, end, name)` の本体を `wav::parse(start, end - start, kSampleRate, pcm)` の呼び出しに置き換え、`Status` を見て **今と同じ文言・同じタグ** でログを出し、`Audio::Pcm` に詰めて返す。`audio.cpp` の `le32` / `le16` は不要になるので消す。
 - 戻り値・呼び出し側（`clips.cpp`、`app_roulette.cpp`）は変えない。
@@ -65,13 +65,17 @@ ParseStatus parseFrameResult(const char* json, size_t len, const char* expect_si
 // photo の応答本文。pending なら out.status = Pending で Ok。
 // ready で photo_url / share_url / expires_at のどれかが空なら BadResponse、
 // どれかが PhotoInfo の配列に収まらなければ BadPhotoUrl (reason もその場で入れる)。
-ParseStatus parsePhotoInfo(const char* json, size_t len, PhotoInfo& out);
+// missing: BadResponse のとき欠けていた項目名 ("photo_url" など)。ログ用 (実装で追加。下記)。
+ParseStatus parsePhotoInfo(const char* json, size_t len, PhotoInfo& out, const char** missing = nullptr);
 Hint parseHint(const char* h);  // 既存の無名名前空間の関数を移す
 }
 ```
 
+- `error`（と不明な `status`）は `out.status = Error`、`reason` をコピー（無ければ `"error"`）して `Ok` を返す。`parseFrameResult` は `BadJson` / `Mismatch` のとき `out` を変えない。
+- 実装で変えた点: `parsePhotoInfo` に省略可能な引数 `missing` を足した。今のログ `photo ready without {photo_url|share_url|expires_at}` はどの項目が欠けたかを出すが、`ParseStatus` と `PhotoInfo` だけでは呼び出し側に分からないため（欠けた応答で `PhotoInfo` に URL を入れておく案は、publish する内容が変わるので採らなかった）。
+
 - `sendFrame()` の `deserializeJson` 〜 `fr.latency_ms` まで、`pollPhoto()` の `deserializeJson` 〜 `publishPhoto` の直前までを置き換える。ログ（`photo ready without …`、`setErrorOp`）は `ParseStatus` を見て **今と同じ文言** を `EdgeWorker` 側で出す。`clampU8` は `edge_parse.cpp` に移す。
-- `edge_client.h` は `esp_heap_caps.h`（PSRAM アロケータ）を include している。`edge_parse.h` から `FrameResult` / `PhotoInfo` / `Hint` を使うには、これらの型を `net/edge_types.h`（純粋な型だけ）に移し、`edge_client.h` がそれを include する形にする。
+- `edge_client.h` は `esp_heap_caps.h`（PSRAM アロケータ）を include している。`edge_parse.h` から `FrameResult` / `PhotoInfo` / `Hint` を使うには、これらの型を `net/edge_types.h`（純粋な型だけ）に移し、`edge_client.h` がそれを include する形にする。`PhotoInfo::reason` の値 `kSaveRetryExhausted` も `PhotoInfo` と一緒に移した。
 - ArduinoJson: 実機では `components/ArduinoJson`（`repos.json` の v7.4.2、ヘッダのみ）。ホストテストでは `firmware/tests/CMakeLists.txt` で `../components/ArduinoJson` があればそれを、無ければ `FetchContent` で **同じ v7.4.2** を取る（CI は `fetch_repos.py` を実行しないため）。バージョンは `repos.json` と同じ値にし、コメントでそう書く。
 - テスト `firmware/tests/edge_parse_test.cpp`:
   - frame_result の全項目が入る。`hint` の `closer` / `too_many` / 無し。`face_count` 300 → 255 に丸める。`latency_ms` 70000 → 65535。
@@ -99,6 +103,15 @@ Hint parseHint(const char* h);  // 既存の無名名前空間の関数を移す
 
   `HeadLogic` は `Servo&` を受け取る。`motion().update()`、`setAutoTorqueReleaseEnabled`、`setAutoAngleSyncEnabled` は `Motion` 固有なので `Head`（接点）に残す。ログ（`mclog`）はロジック層に置けないので、`HeadLogic` は「何が起きたか」を戻り値（`enum class Event { None, Settled, NearTargetSettled, Paused, Faulted, Resumed }`）で返し、`Head::update()` が今と同じ文言で出す。`nudge` / `moveTo` のログも同様に `Head` 側。
 - `Head` は `HeadLogic` と `MotionServo`（`Servo` の `Motion` 実装）を持つ薄い層になる。公開メソッドと戻り値は変えない。
+- 実装で決めた細部（ログを今と同じ文言・同じ値で出すため）:
+  - `HeadLogic::begin()` は状態の初期化だけ。`neutral` の指示は `Head::begin()` が `setAutoTorqueReleaseEnabled(false)` などの後に `Head::neutral()` で出す（`moveTo` のログを `Head` で出すため）。
+  - `HeadLogic::end(now)` は `active` でなければ `false`。そうでなければ待ちを取り消し、異常でなければ neutral を指示して `true`。`Head::end()` はその後に `moveTo` のログ・`setAutoTorqueReleaseEnabled(true)`・`end:` のログを出す。
+  - `update(now, Detail*)`: `NearTargetSettled` / `Paused` / `Faulted` のときの実際の角度と、置き換える前の目標を `Detail` で返す。経過時間は `Head` が `now - lastCommandMs()`、回数は `faultCount()` で取る。
+  - `nudge(dx, dy, now, Step*)`: 実際に使った変化量（制限と `HEAD_MIN_STEP` の後）を `Step` で返す（`nudge d=(…)` のログ用）。
+  - クランプは自由関数 `clampHeadX` / `clampHeadY`（`Head::moveTo` の `moveTo clamped` のログでも使う）。
+  - `Head` は `logic_` が `servo_` を参照するのでコピーを禁止した（使っている所は `std::unique_ptr` で持つだけなので影響なし）。
+  - 一時停止からの再開で待っていた指示を送るとき、`resume head commands …` のログは今は指示の **後** に出る（前は指示の前）。指示とログの中身は同じ。
+  - 応答なしで首を止めた後の `nudge` は、切り出す前と同じく `true` を返す（`command` が何もしないので指示は出ない）。テストもこの動作を確かめる。
 - テスト `firmware/tests/head_logic_test.cpp`（偽の `Servo` を使う）:
   - `nudge`: 間隔 `HEAD_STEP_INTERVAL_MS` 未満は false。±`HEAD_STEP_MAX` に制限。`HEAD_MIN_STEP` 未満は 0 扱い。可動域（`HEAD_X_MIN/MAX`、`HEAD_Y_MIN/MAX`）でクランプ。
   - 監視: `isMoving` が false を返したら `Settled`、`fault_count` が 0 に戻る。`HEAD_MOVE_TIMEOUT_MS` を過ぎて目標の近く（`HEAD_SETTLE_TOLERANCE`）なら `NearTargetSettled`、`stop()` は呼ばない。
@@ -112,6 +125,7 @@ Hint parseHint(const char* h);  // 既存の無名名前空間の関数を移す
 `Lights` の `Mode`・時刻・色相計算を `LightPattern` に移し、`Lights` は「`LightPattern` が返した 12 色を、前回と違うときだけ `GetHAL()` に書く」だけにする。
 
 - `LightPattern`: `startRainbow(now)`, `setReach(bool)`, `off()`, `bool colors(uint32_t now_ms, Rgb (&out)[12])`（出力が前回と変わったら true）。虹色の 1.2 秒経過での消灯、50 ms 間隔、リーチ優先はここ。
+- 実装で決めた細部: `Rgb`・`hueToRgb`・`kMaxLevel` はテストのため `light_pattern.h` に出した。`Lights` の `startRainbow` / `setReach` / `off` は今までどおりその場で LED に書く（`colors()` を呼んで変わっていれば書く）。消灯・リーチの色は時刻によらないので、`setReach` / `off` は `Lights` が最後に受けた時刻で `colors()` を呼ぶ。LED ごとの「前回と同じなら書かない」は `Lights::show()` に残した。
 - テスト `firmware/tests/light_pattern_test.cpp`: `hueToRgb` の 6 区間の端（0, 60, …, 300 と 359）、最大成分が `kMaxLevel` を超えない、虹色が 1200 ms で消える、50 ms 未満は再計算しない、虹色中の `setReach(true)` で全 LED が (24,18,0)、`setReach(false)` と `off()` で消える、`millis` の一周。
 
 ### F. 期限の表示（`flow/time_format`）
@@ -125,6 +139,7 @@ Hint parseHint(const char* h);  // 既存の無名名前空間の関数を移す
 - `changes` のフィルタに `firmware: ['firmware/main/**', 'firmware/tests/**', '.github/workflows/ci.yml']`。
 - `ubuntu-latest` で `cmake -S firmware/tests -B build-host-tests && cmake --build build-host-tests && ctest --test-dir build-host-tests --output-on-failure`。追加の依存は ArduinoJson の `FetchContent` だけ（§4）。
 - `firmware/README.md` の「Host-side tests」に、テストの一覧と macOS の `SDKROOT` の注意を足す。
+- 実装の確認: `components/` の無いコピー（`git archive`）で `FetchContent` の経路を通した。Linux の GCC では未実行（この Mac の Homebrew GCC は動かず、Docker も止まっている）。代わりに ESP-IDF の GCC 14.2（xtensa）で全テストを `-fsyntax-only -Wall -Wextra` にかけ、警告なしを確かめた。
 
 ## 7. 次のステップ（この PR には入れない）
 
@@ -134,8 +149,8 @@ Hint parseHint(const char* h);  // 既存の無名名前空間の関数を移す
 
 ## 8. 受け入れチェック
 
-- [ ] skill §4 の `grep` でロジック層に禁止 include が無い（§2 の 6 ファイル。`edge_parse` の ArduinoJson は除く）
-- [ ] `ctest` が全部通る（既存 2 本 + 新規 6 本）
-- [ ] `idf.py build` が通り、警告が増えない
-- [ ] `git diff` で、切り出した関数のしきい値・分岐・ログの文言が変わっていない（レビューで確認）
+- [x] skill §4 の `grep` でロジック層に禁止 include が無い（§2 の 6 ファイル + `net/edge_types.h`。`edge_parse` の ArduinoJson は除く。skill の grep にも足した）
+- [x] `ctest` が全部通る（既存 2 本 + 新規 6 本）
+- [x] `idf.py build` が通り、警告が増えない
+- [ ] `git diff` で、切り出した関数のしきい値・分岐・ログの文言が変わっていない（実装者は確認済み。レビューで確認）
 - [ ] 実機: photobooth の一周（首振り・応答なしの表示・QR）とスロットの LED が今までどおり（PR #19 と合わせて確認）
