@@ -58,3 +58,34 @@ target_include_directories(jpeg_info_test PRIVATE
 target_compile_features(jpeg_info_test PRIVATE cxx_std_17)
 
 add_test(NAME jpeg_info_test COMMAND $<TARGET_FILE:jpeg_info_test>)
+
+# ArduinoJson (ヘッダのみ)。実機と同じ components/ArduinoJson (fetch_repos.py が取る) があればそれを使い、
+# 無ければ (CI は fetch_repos.py を実行しない) FetchContent で取る。バージョンは repos.json と同じ v7.4.2 にすること。
+set(ARDUINOJSON_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/ArduinoJson)
+if(EXISTS ${ARDUINOJSON_LOCAL_DIR}/src/ArduinoJson.h)
+    set(ARDUINOJSON_INCLUDE_DIR ${ARDUINOJSON_LOCAL_DIR}/src)
+else()
+    include(FetchContent)
+    FetchContent_Declare(arduinojson
+        GIT_REPOSITORY https://github.com/bblanchon/ArduinoJson.git
+        GIT_TAG v7.4.2
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(arduinojson)
+    set(ARDUINOJSON_INCLUDE_DIR ${arduinojson_SOURCE_DIR}/src)
+endif()
+
+# app_photobooth の net/edge_parse (edge の応答の解釈)
+add_executable(edge_parse_test
+    edge_parse_test.cpp
+    ../main/apps/app_photobooth/net/edge_parse.cpp
+)
+
+target_include_directories(edge_parse_test PRIVATE
+    ../main
+    ${ARDUINOJSON_INCLUDE_DIR}
+)
+
+target_compile_features(edge_parse_test PRIVATE cxx_std_17)
+
+add_test(NAME edge_parse_test COMMAND $<TARGET_FILE:edge_parse_test>)
