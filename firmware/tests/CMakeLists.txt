@@ -44,3 +44,17 @@ target_include_directories(wav_test PRIVATE
 target_compile_features(wav_test PRIVATE cxx_std_17)
 
 add_test(NAME wav_test COMMAND $<TARGET_FILE:wav_test>)
+
+# app_photobooth の view/jpeg_info (JPEG のヘッダ解析)
+add_executable(jpeg_info_test
+    jpeg_info_test.cpp
+    ../main/apps/app_photobooth/view/jpeg_info.cpp
+)
+
+target_include_directories(jpeg_info_test PRIVATE
+    ../main
+)
+
+target_compile_features(jpeg_info_test PRIVATE cxx_std_17)
+
+add_test(NAME jpeg_info_test COMMAND $<TARGET_FILE:jpeg_info_test>)
