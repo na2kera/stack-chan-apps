@@ -103,3 +103,17 @@ target_include_directories(head_logic_test PRIVATE
 target_compile_features(head_logic_test PRIVATE cxx_std_17)
 
 add_test(NAME head_logic_test COMMAND $<TARGET_FILE:head_logic_test>)
+
+# app_roulette の hw/light_pattern (頭部 LED の色の計算)
+add_executable(light_pattern_test
+    light_pattern_test.cpp
+    ../main/apps/app_roulette/hw/light_pattern.cpp
+)
+
+target_include_directories(light_pattern_test PRIVATE
+    ../main
+)
+
+target_compile_features(light_pattern_test PRIVATE cxx_std_17)
+
+add_test(NAME light_pattern_test COMMAND $<TARGET_FILE:light_pattern_test>)
