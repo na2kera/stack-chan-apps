@@ -337,25 +337,36 @@ class EdgeClient:
             self.http.post(f"/v1/sessions/{sid}/cancel")
 
 
+class DeadlineExceeded(RuntimeError):
+    """--wait-ready-sec の期限を過ぎてから hello の応答が届いた。"""
+
+
 def wait_ready(edge: EdgeClient, max_sec: float, stats: Stats | None) -> dict[str, Any]:
     """起動時の hello。max_sec > 0 なら 200 が返るまで最大 max_sec 秒繰り返す (cold start の計測)。
 
     0 なら従来どおり 1 回だけ試す。最初の要求から 200 までの時間と各応答を stats に残す。
-    max_sec は全体の上限: 再試行の待ちと各 hello のタイムアウトを残り時間以下に切り詰める。
+    max_sec は全体の上限: 再試行の待ちと各 hello のタイムアウトを残り時間以下に切り詰め、
+    期限を過ぎてから届いた 200 は成功にしない (DeadlineExceeded)。
+    ただし httpx の数値 timeout は connect / read / write / pool の各フェーズの上限で、
+    要求全体の wall-clock の上限ではない。実時間の超過は最大 1 フェーズ分あり得る
+    (厳密に打ち切る仕組みは入れていない)。
+    起動時の hello (cold かもしれない) の RTT と失敗は warm の hello の集計に混ぜない。
     """
     t0 = time.monotonic()
     deadline = t0 + max_sec
     codes: list[str] = []
 
-    def record(ok: bool) -> None:
+    def record(ok: bool, reason: str | None = None) -> None:
         if stats:
-            key = "ms_to_200" if ok else "ms"
-            stats.cold_hello = {
-                "ok": ok,
-                key: round(_ms_since(t0)),
-                "attempts": len(codes),
-                "codes": list(codes),
-            }
+            entry: dict[str, Any] = {"ok": ok}
+            entry["ms_to_200" if ok else "ms"] = round(_ms_since(t0))
+            if reason:
+                entry["reason"] = reason
+            entry["attempts"] = len(codes)
+            entry["codes"] = list(codes)
+            stats.cold_hello = entry
+            stats.hello_rtt_ms.clear()
+            stats.hello_errors.clear()
 
     while True:
         timeout: float | None = None
@@ -374,11 +385,11 @@ def wait_ready(edge: EdgeClient, max_sec: float, stats: Stats | None) -> dict[st
                 record(False)
                 raise
             continue
-        codes.append("200")
+        codes.append("200")  # 期限切れでも何が返ったかは残す
+        if max_sec > 0 and time.monotonic() > deadline:
+            record(False, "deadline_exceeded")
+            raise DeadlineExceeded(f"hello: 200 arrived after --wait-ready-sec {max_sec:g}")
         record(True)
-        if stats:
-            # 起動時の hello (cold かもしれない) は warm の RTT に混ぜない
-            stats.hello_rtt_ms.clear()
         return info
 
 

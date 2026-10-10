@@ -247,3 +247,43 @@ def test_auto_session_save_timeout_is_failure(monkeypatch) -> None:
     outcome = wd.auto_session(edge, None, _opt(), auto_save=True, heartbeat_sec=0)
     assert outcome == "save_failed"
     assert stats.save_errors == {"timeout": 1}
+
+
+def test_wait_ready_200_after_deadline_is_failure(monkeypatch) -> None:
+    clock = FakeClock()
+    monkeypatch.setattr(wd.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(wd.time, "sleep", clock.sleep)
+
+    def handler(req):
+        clock.now += 6.0  # 期限 (5 秒) を過ぎてから 200 が届く
+        return httpx.Response(200, json={"ready": True, "countdown_sec": 10})
+
+    stats = wd.Stats()
+    with pytest.raises(wd.DeadlineExceeded):
+        wd.wait_ready(_client(handler, stats), max_sec=5, stats=stats)
+    assert stats.cold_hello == {
+        "ok": False,
+        "ms": 6000,
+        "reason": "deadline_exceeded",
+        "attempts": 1,
+        "codes": ["200"],
+    }
+    assert "ms_to_200" not in stats.cold_hello
+
+
+def test_cold_hello_failures_do_not_leak_into_warm_errors(monkeypatch) -> None:
+    monkeypatch.setattr(wd.time, "sleep", lambda _s: None)
+    replies = iter([500, 503, 200])
+
+    def handler(req):
+        status = next(replies)
+        if status == 200:
+            return httpx.Response(200, json={"ready": True, "countdown_sec": 10})
+        return httpx.Response(status, json={"error": "x"})
+
+    stats = wd.Stats()
+    wd.wait_ready(_client(handler, stats), max_sec=60, stats=stats)
+    assert stats.cold_hello["codes"] == ["500:x", "503:x", "200"]
+    out = stats.to_json()["hello"]
+    assert out["errors"] == {}
+    assert out["rtt_ms"] == {"count": 0}
