@@ -216,7 +216,7 @@ firmware/
 
 - [x] 6a: `wrangler deploy` で Worker が立ち、試験 1〜8 を記録した。`docs/measurements/step6-<date>.md` がある。→ [step6-2026-10-10.md](../measurements/step6-2026-10-10.md)。試験 3 で切断後も起動が続いたので `503 starting` は不要。試験 7a は `wrangler deploy` で rollout が起きず、Containers API で同じイメージの rollout を作って確かめた
 - [ ] 6b: `idf.py build` (`config_local.h` あり http / あり https / なし) が通る。`firmware-tests` に `edge_url` のテストが入り CI が通る。試験 9〜20。
-- [ ] 6c: 試験 21〜23。`logStats()` に JPEG の統計が出る。→ 実装済み (`feat/step6c-jpeg-frames`)、実機は未検証。net タスクが send 面を `image_to_jpeg()` (品質 80) で符号化し、出力バッファを送信後に `free()`。呼び出しは `net/frame_jpeg.cpp` に分けた (`image_to_jpeg.h` が含む `linux/videodev2.h` の `_IO` 系マクロが lwIP の `sockets.h` と衝突するため)。形式の選択・失敗の注入 (`-DPHOTOBOOTH_JPEG_FAIL_EVERY=N`、試験 22 用。エンコーダを呼ばずに失敗扱いにする)・統計の集計は `net/frame_stats` (ホストテスト `frame_stats_test`)。`idf.py build` (JPEG) と `-DPHOTOBOOTH_FRAME_RGB565=1` の 2 通りが警告なしで通る
+- [ ] 6c: 試験 21〜23。`logStats()` に JPEG の統計が出る。→ 実装済み (`feat/step6c-jpeg-frames`)、実機は未検証。net タスクが send 面を `image_to_jpeg()` (品質 80) で符号化し、出力バッファを送信後に `free()`。呼び出しは `net/frame_jpeg.cpp` に分けた (`image_to_jpeg.h` が含む `linux/videodev2.h` の `_IO` 系マクロが lwIP の `sockets.h` と衝突するため)。形式の選択・失敗の注入 (`-DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=N`、試験 22 用。エンコーダを呼ばずに失敗扱いにする。`TEST_HOOKS` なしでは CMake と `static_assert` で止める)・統計の集計は `net/frame_stats` (ホストテスト `frame_stats_test`)。`idf.py build` (JPEG) と `-DPHOTOBOOTH_FRAME_RGB565=1` の 2 通りが警告なしで通る
 - [ ] 6d: 試験 24。決めた値 (`config.h`、`wrangler.jsonc`) と根拠を計測記録に書いた。
 - [ ] 各サブステップで codex レビューを通し、指摘を反映した。
 - [ ] Worker とコンテナのログに鍵・画像・写真 URL が出ない。

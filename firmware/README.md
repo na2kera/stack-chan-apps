@@ -71,7 +71,7 @@ upstream との差分は次だけにしている。
 | アプリの登録 | `main/apps/apps.h` の include 各 1 行、`main/main.cpp` の `installApp` 各 1 行 (AppPhotobooth → AppRoulette の順で最後に足す) |
 | セリフ WAV の埋め込み | `main/CMakeLists.txt` の `PHOTOBOOTH_VOICES` / `ROULETTE_VOICES` (`EMBED_FILES`。ファイル名がシンボル名になるので、スロットの WAV は `rl_` 始まり) |
 | edge 通信なしでビルドするスイッチ | `main/CMakeLists.txt` の `PHOTOBOOTH_NO_EDGE` (`idf.py -DPHOTOBOOTH_NO_EDGE=1 build`) |
-| frame を RGB565 のまま送るスイッチ・符号化失敗の注入 (試験用) | `main/CMakeLists.txt` の `PHOTOBOOTH_FRAME_RGB565` / `PHOTOBOOTH_JPEG_FAIL_EVERY` |
+| frame を RGB565 のまま送るスイッチ・符号化失敗の注入 (試験用) | `main/CMakeLists.txt` の `PHOTOBOOTH_FRAME_RGB565` / `PHOTOBOOTH_TEST_HOOKS` + `PHOTOBOOTH_JPEG_FAIL_EVERY` |
 | 起動時の自動ファーム更新を止める | `patches/xiaozhi-esp32.patch` (`xiaozhi-esp32/main/application.cc` の `CheckNewVersion()`) |
 
 ### 自動更新を止めている理由と範囲
@@ -185,7 +185,11 @@ URL は起動ごとに変わり、SLA も無いので開発の確認専用 (本�
 (`docs/design/step6-cloud-device.md` §3.3)。`idf.py -DPHOTOBOOTH_FRAME_RGB565=1 build` でビルドすると 6b までと同じ
 RGB565 (153,600 バイト、`X-Format: rgb565`) で送る。CMake のキャッシュに残るので、戻すときは
 `idf.py -DPHOTOBOOTH_FRAME_RGB565=0 build`。符号化に失敗したフレームは捨てて (RGB565 では送らない) 統計に数える。
-試験用に `idf.py -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で N 回に 1 回符号化を失敗扱いにできる (戻すときは `=0`)。
+試験用 (試験 22) に `idf.py -DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で N 回に 1 回符号化を
+失敗扱いにできる。起動時に `PB-Edge: JPEG fail injection every N (TEST BUILD)` が出る。どちらもキャッシュに残るので、
+試験が終わったら **両方 0 に戻す**: `idf.py -DPHOTOBOOTH_TEST_HOOKS=0 -DPHOTOBOOTH_JPEG_FAIL_EVERY=0 build`。
+`PHOTOBOOTH_TEST_HOOKS` なしで `PHOTOBOOTH_JPEG_FAIL_EVERY` だけが残っていると、CMake がエラーで止める
+(製品ファームに失敗注入が紛れ込まないように)。
 
 **edge なしでビルドする**: `config_local.h` が無い、または `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` でビルドすると、
 Wi-Fi に繋がず、ステップ1 と同じ単体動作 (QR は `config.h` の固定 URL) になる。`-DPHOTOBOOTH_NO_EDGE` は

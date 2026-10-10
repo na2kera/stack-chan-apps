@@ -216,3 +216,15 @@ foreach(pair "old_namespace|EDGE_HOST/EDGE_PORT" "old_global|EDGE_HOST/EDGE_PORT
                      ${CMAKE_CURRENT_SOURCE_DIR}/edge_config_test.cpp)
     set_tests_properties(edge_config_rejects_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expected}")
 endforeach()
+
+# app_photobooth の config.h: 失敗注入 (PHOTOBOOTH_JPEG_FAIL_EVERY) は PHOTOBOOTH_TEST_HOOKS なしでは static_assert で止まる
+add_test(NAME config_rejects_fail_injection_without_test_hooks
+         COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 -fsyntax-only ${EDGE_CONFIG_SYSROOT_ARGS}
+                 -I${CMAKE_CURRENT_SOURCE_DIR}/../main -DPHOTOBOOTH_JPEG_FAIL_EVERY=3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/frame_stats_test.cpp)
+set_tests_properties(config_rejects_fail_injection_without_test_hooks PROPERTIES
+                     PASS_REGULAR_EXPRESSION "PHOTOBOOTH_TEST_HOOKS=1")
+add_test(NAME config_accepts_fail_injection_with_test_hooks
+         COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 -fsyntax-only ${EDGE_CONFIG_SYSROOT_ARGS}
+                 -I${CMAKE_CURRENT_SOURCE_DIR}/../main -DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/frame_stats_test.cpp)

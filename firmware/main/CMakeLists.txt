@@ -344,8 +344,20 @@ endif()
 if(PHOTOBOOTH_FRAME_RGB565)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_FRAME_RGB565=1)
 endif()
-# app_photobooth の試験 22: `idf.py -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で N 回に 1 回 JPEG の符号化を失敗扱いに
-# する (デバッグ用)。戻すときは `-DPHOTOBOOTH_JPEG_FAIL_EVERY=0`。
+# app_photobooth の試験用フック (製品ファームには入れない)。
+#   試験 22: `idf.py -DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で N 回に 1 回 JPEG の符号化を
+#   失敗扱いにする。どちらも CMake のキャッシュに残るので、戻すときは
+#   `idf.py -DPHOTOBOOTH_TEST_HOOKS=0 -DPHOTOBOOTH_JPEG_FAIL_EVERY=0 build`。
+# PHOTOBOOTH_TEST_HOOKS なしで失敗注入だけがキャッシュに残っていたら、通常のビルドに紛れ込まないよう止める。
+if(PHOTOBOOTH_JPEG_FAIL_EVERY AND NOT PHOTOBOOTH_TEST_HOOKS)
+    message(FATAL_ERROR
+        "PHOTOBOOTH_JPEG_FAIL_EVERY=${PHOTOBOOTH_JPEG_FAIL_EVERY} は試験用です。"
+        "試験なら -DPHOTOBOOTH_TEST_HOOKS=1 を付け、通常のビルドなら -DPHOTOBOOTH_JPEG_FAIL_EVERY=0 に戻してください "
+        "(firmware/README.md「frame の形式」)。")
+endif()
+if(PHOTOBOOTH_TEST_HOOKS)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_TEST_HOOKS=1)
+endif()
 if(PHOTOBOOTH_JPEG_FAIL_EVERY)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_JPEG_FAIL_EVERY=${PHOTOBOOTH_JPEG_FAIL_EVERY})
 endif()

@@ -33,8 +33,14 @@
 #define PHOTOBOOTH_FRAME_FORMAT_JPEG 1
 #endif
 
-// 試験 22 (符号化失敗の注入) のデバッグ定義。`idf.py -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で、N 回に 1 回
-// 符号化を失敗扱いにする (エンコーダを呼ばずに、確保失敗と同じ経路で破棄する)。0 (既定) で無効。
+// 試験用フック。`idf.py -DPHOTOBOOTH_TEST_HOOKS=1 ...` のときだけ有効 (製品ファームでは 0)。
+#ifndef PHOTOBOOTH_TEST_HOOKS
+#define PHOTOBOOTH_TEST_HOOKS 0
+#endif
+
+// 試験 22 (符号化失敗の注入) のデバッグ定義。`idf.py -DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build`
+// で、N 回に 1 回符号化を失敗扱いにする (エンコーダを呼ばずに、確保失敗と同じ経路で破棄する)。0 (既定) で無効。
+// PHOTOBOOTH_TEST_HOOKS なしでは使えない (CMake と下の static_assert で止める)。
 #ifndef PHOTOBOOTH_JPEG_FAIL_EVERY
 #define PHOTOBOOTH_JPEG_FAIL_EVERY 0
 #endif
@@ -72,6 +78,9 @@ constexpr uint8_t UPLOAD_RETRY       = 3;      // 保存 (review save) の送信
 constexpr bool FRAME_FORMAT_JPEG       = PHOTOBOOTH_FRAME_FORMAT_JPEG != 0;  // false なら RGB565 LE のまま
 constexpr uint8_t FRAME_JPEG_QUALITY   = 80;  // edge の候補 JPEG と同じ。サイズの上限は設けない
 constexpr uint32_t JPEG_FAIL_EVERY     = PHOTOBOOTH_JPEG_FAIL_EVERY;  // 0 = 注入しない (デバッグ用)
+constexpr bool TEST_HOOKS              = PHOTOBOOTH_TEST_HOOKS != 0;
+static_assert(JPEG_FAIL_EVERY == 0 || TEST_HOOKS,
+              "PHOTOBOOTH_JPEG_FAIL_EVERY は試験用。PHOTOBOOTH_TEST_HOOKS=1 のときだけ使える");
 
 // ---- 首振り (単位: 純正 Motion と同じ 1/10 度。250 = 25°) ----
 // X = yaw (左右)、Y = pitch (純正の home = 0 が下向き、値が大きいほど上向き)。

@@ -454,6 +454,9 @@ bool HttpEdgeClient::begin()
     // 接続先はログに出さない (URL を出さない方針)。scheme とポートだけ出す。
     mclog::tagInfo(kTag, "net task started (stack {}, {} port {})", kTaskStack, pu.url.https ? "https" : "http",
                    static_cast<unsigned>(pu.url.port));
+    if (config::JPEG_FAIL_EVERY != 0) {
+        mclog::tagWarn(kTag, "JPEG fail injection every {} (TEST BUILD)", config::JPEG_FAIL_EVERY);
+    }
     return true;
 }
 
