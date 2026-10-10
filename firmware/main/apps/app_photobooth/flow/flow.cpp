@@ -384,6 +384,8 @@ void Flow::drainCandidate()
 
 void Flow::update(const shared::hw::Event& ev, uint32_t now_ms)
 {
+    // 判定つきのセッション中は net タスクが定期 hello を止める (後ろに並ぶ依頼を待たせない)。
+    edge_.setSessionActive(session_.active && judged_);
     head_.update(now_ms);
     if (exit_requested_) {
         return;
@@ -463,7 +465,7 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
         return;
     }
 
-    // 右下の接続表示 (「接続中」/「準備中…」/「接続できません」)。変わったときだけ差し替える。
+    // 右下の接続表示 (「接続中」/「準備中」/「接続なし」)。変わったときだけ差し替える。
     if (now_ms - idle_link_checked_ms_ >= kIdleLinkPollMs) {
         idle_link_checked_ms_     = now_ms;
         const view::IdleLink link = idleLink();

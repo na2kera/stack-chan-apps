@@ -13,8 +13,8 @@ namespace photobooth::net {
 
 // 待機画面に出す接続状態 (docs/design/step6-cloud-device.md §3.2「UI の状態」)。
 enum class LinkState : uint8_t {
-    Offline,   // 「接続できません」(edge 無効ビルド・Wi-Fi なし・DNS / TCP / TLS / 証明書の失敗・401 もこれ)
-    Starting,  // 「準備中…」: 接続は成立したが hello の応答待ちで期限切れ、または 5xx (cold start など)
+    Offline,   // 「接続なし」(edge 無効ビルド・Wi-Fi なし・DNS / TCP / TLS / 証明書の失敗・401 もこれ)
+    Starting,  // 「準備中」: 接続は成立したが hello の応答待ちで期限切れ、または 5xx (cold start など)
     Online,    // 「接続中」: 直近に 2xx
 };
 

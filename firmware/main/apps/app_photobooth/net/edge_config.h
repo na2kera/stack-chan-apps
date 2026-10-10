@@ -11,8 +11,8 @@
 // 旧形式の config_local.h のままビルドすると、移行手順を示してビルドを止める。
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-#include <type_traits>
 
 #include "../config.h"
 
@@ -26,38 +26,49 @@
 #endif
 
 // constexpr で書かれた名前はプリプロセッサから見えないので、名前の有無を型で調べる。
-// 下の「代わりの名前」は using 指令でグローバル名前空間に見えるので、photobooth::config (見本の書き方) の
-// 定義があればそちらが先に見つかり、無ければ代わりの名前 (Missing 型) が見つかる。
-// (このため config_local.h の名前は photobooth::config の中か #define で書く。グローバル名前空間に
-//  constexpr で書くと、代わりの名前とあいまいになってビルドが止まる。)
-namespace photobooth_edge_config_fallback {
-struct Missing {};
+// グローバル名前空間に同じ名前のクラス (目印) を置く。C++ では同じ有効範囲の変数がクラス名を隠すので、
+//   - photobooth::config の中の定義 (見本の書き方) はそちらが先に見つかる。
+//   - グローバル名前空間の constexpr は、目印のクラスを隠して変数が見つかる。
+//   - どちらも無ければ目印のクラス (型) が見つかる。
+// sizeof は型にも式にも使えるので、目印の大きさかどうかで有無が分かる。#define なら目印を置かない。
+namespace photobooth::config::local::probe {
+inline constexpr size_t kMarkerSize = 4093;  // 文字列のポインタ・配列と重ならない大きさ
+}  // namespace photobooth::config::local::probe
 #ifndef EDGE_BASE_URL
-inline constexpr Missing EDGE_BASE_URL{};
+struct EDGE_BASE_URL {
+    char marker[photobooth::config::local::probe::kMarkerSize];
+};
 #endif
 #ifndef EDGE_HOST
-inline constexpr Missing EDGE_HOST{};
+struct EDGE_HOST {
+    char marker[photobooth::config::local::probe::kMarkerSize];
+};
 #endif
-}  // namespace photobooth_edge_config_fallback
 
 namespace photobooth::config::local {
 
 namespace probe {
-using namespace ::photobooth_edge_config_fallback;
-using ::photobooth_edge_config_fallback::Missing;
 
-inline constexpr bool kHasBaseUrl = !std::is_same_v<std::decay_t<decltype(EDGE_BASE_URL)>, Missing>;
-inline constexpr bool kHasOldHost = !std::is_same_v<std::decay_t<decltype(EDGE_HOST)>, Missing>;
+inline constexpr bool kHasBaseUrl = sizeof(EDGE_BASE_URL) != kMarkerSize;
+inline constexpr bool kHasOldHost = sizeof(EDGE_HOST) != kMarkerSize;
 
-constexpr const char* baseUrlOr(const char* v)
-{
-    return v;
-}
-constexpr const char* baseUrlOr(Missing)
+// 値の取り出し。EDGE_BASE_URL が型 (目印) なら 1 つ目、変数なら 2 つ目が選ばれる。
+template <class T>
+constexpr const char* baseUrlOf()
 {
     return "";
 }
-inline constexpr const char* kBaseUrl = baseUrlOr(EDGE_BASE_URL);
+template <const auto& V>
+constexpr const char* baseUrlOf()
+{
+    return V;
+}
+#ifdef EDGE_BASE_URL
+inline constexpr const char* kBaseUrl = EDGE_BASE_URL;  // #define (文字列リテラル)
+#else
+inline constexpr const char* kBaseUrl = baseUrlOf<EDGE_BASE_URL>();
+#endif
+
 }  // namespace probe
 
 static_assert(probe::kHasBaseUrl || !probe::kHasOldHost,
@@ -66,8 +77,8 @@ static_assert(probe::kHasBaseUrl || !probe::kHasOldHost,
 static_assert(probe::kHasBaseUrl || probe::kHasOldHost,  // 旧形式なら上の案内だけを出す
               "config_local.h: EDGE_BASE_URL がありません (config_local.example.h を見本に書いてください)");
 
-// config_local.h の書き方 (photobooth::config 内の constexpr / #define) のどちらでも受けられるよう、
-// 非修飾名で引き直す。EDGE_BASE_URL の書式は net/edge_url で確かめる (不正なら begin() が失敗する)。
+// config_local.h の書き方 (photobooth::config 内の constexpr / グローバルの constexpr / #define) の
+// どれでも受けられるよう、非修飾名で引き直す。EDGE_BASE_URL の書式は net/edge_url で確かめる (不正なら begin() が失敗する)。
 inline constexpr const char* kEdgeBaseUrl = probe::kBaseUrl;
 inline constexpr const char* kDeviceId    = DEVICE_ID;
 inline constexpr const char* kSharedKey   = EDGE_SHARED_KEY;

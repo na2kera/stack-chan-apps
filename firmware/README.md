@@ -41,7 +41,8 @@ ctest --test-dir build-host-tests --output-on-failure
 | `head_logic_test` | `app_photobooth/hw/head_logic` (首の応答監視。サーボは偽物) |
 | `time_format_test` | `app_photobooth/flow/time_format` (写真の期限の表示) |
 | `edge_url_test` | `app_photobooth/net/edge_url` (`EDGE_BASE_URL` の分解) |
-| `link_logic_test` | `app_photobooth/net/link_logic` (接続の失敗の分類・タイムアウト表・接続状態) |
+| `link_logic_test` | `app_photobooth/net/link_logic` (接続の失敗の分類・タイムアウト表・接続状態・定期 hello) |
+| `edge_config_test_*` / `edge_config_rejects_*` | `app_photobooth/net/edge_config.h` (`config_local.h` の書き方の受け付けと旧形式の検出。`tests/edge_config_fixtures/`) |
 
 - `edge_parse_test` は ArduinoJson を使う。`components/ArduinoJson` (`fetch_repos.py` が取る) があればそれを、
   無ければ CMake の `FetchContent` で `repos.json` と同じ v7.4.2 を取る (初回はネットワークが要る)。
@@ -97,7 +98,7 @@ SSID / パスワードはコードに書かない。
 1. **Wi-Fi**: 純正の SETUP で Wi-Fi を設定しておく (AI エージェントや App Center が繋がる状態)。2.4 GHz のみ。
    アプリを開くと、純正の App Center と同じく `GetHAL().startNetwork()` を呼んで接続を待つ
    (その間は「Wi-Fi接続中」の画面。繋がると待機画面へ進む)。アプリを閉じても Wi-Fi は切らない。
-   - Wi-Fi が未設定 (NVS に SSID が無い) のときは `startNetwork()` を呼ばず、すぐ待機画面 (「接続できません」) になる。
+   - Wi-Fi が未設定 (NVS に SSID が無い) のときは `startNetwork()` を呼ばず、すぐ待機画面 (右下が「接続なし」) になる。
      診断画面には「未設定」と出る。SETUP で設定してからアプリを開き直す。
    - SSID は保存されているが繋がらない (圏外・パスワード違い) ときは**純正の動作**になる: 約 60 秒後に
      Wi-Fi 設定モード (AP) に入り、繋がるまで「Wi-Fi接続中」の画面から進まない。App Center を開いたときと同じ。
@@ -120,8 +121,8 @@ SSID / パスワードはコードに書かない。
    constexpr const char* EDGE_BASE_URL = "http://192.168.0.167:8765";  // http://<旧 EDGE_HOST>:<旧 EDGE_PORT>
    ```
 
-   `config_local.h` の値は `namespace photobooth::config { ... }` の中の `constexpr` か `#define` で書く
-   (グローバル名前空間の `constexpr` は受け付けない)。書式が不正だと待機画面が「接続できません」、診断画面に
+   `config_local.h` の値は `namespace photobooth::config { ... }` の中の `constexpr`、グローバル名前空間の
+   `constexpr`、`#define` のどれで書いてもよい。書式が不正だと待機画面が「接続なし」、診断画面に
    「接続先の書式が不正」と出る。
 
    https のときは証明書を常に検証する (ESP-IDF の証明書バンドル。`sdkconfig.defaults` の
@@ -138,18 +139,20 @@ SSID / パスワードはコードに書かない。
    macOS のファイアウォールが有効なら、Python への受信を許可する。RGB565 のバイト順は edge 設定の
    `rgb565_byte_order = "little"` (アプリはカメラ層の RGB565 リトルエンディアンをそのまま送る)。
 4. `idf.py build` して書き込み、ランチャーから Photobooth を開く。待機画面の右下が「接続中」になれば繋がっている。
-   「準備中…」は接続はできたが edge の応答待ち (cloud の cold start など。5 秒ごとの `hello` で再試行する)。
-   「接続できません」のまま画面をタッチすると診断画面が開き、Wi-Fi の状態 / IP / 接続先 `scheme://host:port` / 応答 /
+   「準備中」は接続はできたが edge の応答待ち (cloud の cold start など。5 秒ごとの `hello` で再試行する)。
+   「接続なし」のまま画面をタッチすると診断画面が開き、Wi-Fi の状態 / IP / 接続先 `scheme://host:port` / 応答 /
    最後のエラーが読める。「再接続」で edge との接続を作り直してすぐ `hello` を送り、「判定なしで撮影」で edge なしの
    撮影 (保存はできない) を試せる。頭をタッチすると待機画面に戻る。
-   - PC の IP は DHCP で変わることがある。「接続できません」のときは `ipconfig getifaddr en0` と
+   - PC の IP は DHCP で変わることがある。診断画面のエラーが「接続できません」のときは `ipconfig getifaddr en0` と
      診断画面の「接続先」の行を見比べ、違っていたら `config_local.h` を直して書き込み直す。
    - 診断画面の「エラー」: 「DNS失敗」(ホスト名を引けない)、「接続できません」(TCP で繋がらない)、
      「証明書エラー」(証明書を検証できない)、「時刻未同期」(本体の時刻が不正で証明書の期限を検査できない)、
      「TLS接続失敗」(その他の TLS の失敗)、「準備中 (応答待ち)」(接続後に `hello` の応答が 8 秒以内に来ない)。
    - 「認証エラー(IDか鍵が違う)」は `DEVICE_ID` / `EDGE_SHARED_KEY` と edge 側の不一致 (HTTP 401)。
    - シリアルログの `PB-Edge: send N frames ... (x.x fps), rtt avg ...` (5 秒ごと) で送信 fps と往復時間が分かる。
-     5 秒ごとに `PB-Edge: hello N (ok N, starting N) rtt avg ... max ... ms, link ..., stack free ...` も出る。
+     5 秒ごとに `PB-Edge: hello N (ok N, starting N) rtt avg ... max ... ms, link ..., stack free ...` と
+     `PB-Edge: connections: new N reused M` も出る (https で new ばかりなら毎回 TLS ハンドシェイクしている)。
+     定期 `hello` は判定つきの撮影中は送らない (撮影中の接続状態は frame などの結果で決まる)。
      鍵・URL・トークン・画像はログに出さない。
 
 **HTTPS を quick tunnel で試す** (クラウドの edge を立てずに、PC の edge を HTTPS で公開する): Cloudflare Tunnel の

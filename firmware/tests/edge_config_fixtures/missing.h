@@ -1,0 +1,7 @@
+// edge_config_test のフィクスチャ (config_local.h の書き方の 1 つ)。鍵は見本の値。
+#pragma once
+// 接続先が無い (ビルドが止まること)。
+namespace photobooth::config {
+constexpr const char* DEVICE_ID       = "stackchan-01";
+constexpr const char* EDGE_SHARED_KEY = "change-me";
+}  // namespace photobooth::config

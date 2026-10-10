@@ -35,8 +35,8 @@ enum class CapturedSource : uint8_t {
 
 // 待機画面の右下に出す接続状態。
 enum class IdleLink : uint8_t {
-    Offline,   // 「接続できません」
-    Starting,  // 「準備中…」(edge の起動待ち)
+    Offline,   // 「接続なし」
+    Starting,  // 「準備中」(edge の起動待ち)
     Online,    // 「接続中」
 };
 

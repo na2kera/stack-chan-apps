@@ -159,3 +159,46 @@ target_include_directories(link_logic_test PRIVATE
 target_compile_features(link_logic_test PRIVATE cxx_std_17)
 
 add_test(NAME link_logic_test COMMAND $<TARGET_FILE:link_logic_test>)
+
+# app_photobooth の net/edge_config.h (config_local.h の書き方の受け付けと旧形式の検出)。
+# フィクスチャごとに config.h / net/edge_config.h / config_local.h を並べたディレクトリを作ってコンパイルする。
+set(PB_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/apps/app_photobooth)
+function(edge_config_fixture name)
+    set(dir ${CMAKE_CURRENT_BINARY_DIR}/edge_config_${name})
+    configure_file(${PB_APP_DIR}/config.h ${dir}/config.h COPYONLY)
+    configure_file(${PB_APP_DIR}/net/edge_config.h ${dir}/net/edge_config.h COPYONLY)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/edge_config_fixtures/${name}.h ${dir}/config_local.h COPYONLY)
+    set(EDGE_CONFIG_FIXTURE_DIR ${dir} PARENT_SCOPE)
+endfunction()
+
+# 通るはずの書き方: 実行して値を比べる
+foreach(pair "namespace|http://192.168.0.167:8765" "global|https://edge.example.com"
+             "define|https://edge.example.com:8443" "both|http://192.168.0.167:8765")
+    string(REPLACE "|" ";" parts ${pair})
+    list(GET parts 0 name)
+    list(GET parts 1 url)
+    edge_config_fixture(${name})
+    add_executable(edge_config_test_${name} edge_config_test.cpp)
+    target_include_directories(edge_config_test_${name} PRIVATE ${EDGE_CONFIG_FIXTURE_DIR})
+    target_compile_definitions(edge_config_test_${name} PRIVATE EXPECTED_BASE_URL="${url}" FIXTURE_NAME="${name}")
+    target_compile_features(edge_config_test_${name} PRIVATE cxx_std_17)
+    add_test(NAME edge_config_test_${name} COMMAND $<TARGET_FILE:edge_config_test_${name}>)
+endforeach()
+
+# 止まるはずの書き方: コンパイラのエラー文言を確かめる (終了コードではなく文言で合否を決める)
+set(EDGE_CONFIG_SYSROOT_ARGS)
+if(CMAKE_OSX_SYSROOT)
+    set(EDGE_CONFIG_SYSROOT_ARGS -isysroot ${CMAKE_OSX_SYSROOT})
+endif()
+foreach(pair "old_namespace|EDGE_HOST/EDGE_PORT" "old_global|EDGE_HOST/EDGE_PORT"
+             "old_define|EDGE_HOST/EDGE_PORT" "missing|config_local.example.h")
+    string(REPLACE "|" ";" parts ${pair})
+    list(GET parts 0 name)
+    list(GET parts 1 expected)
+    edge_config_fixture(${name})
+    add_test(NAME edge_config_rejects_${name}
+             COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 -fsyntax-only ${EDGE_CONFIG_SYSROOT_ARGS}
+                     -I${EDGE_CONFIG_FIXTURE_DIR} -DFIXTURE_NAME="${name}"
+                     ${CMAKE_CURRENT_SOURCE_DIR}/edge_config_test.cpp)
+    set_tests_properties(edge_config_rejects_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expected}")
+endforeach()

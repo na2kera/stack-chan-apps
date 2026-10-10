@@ -29,9 +29,10 @@ inline constexpr const char* kTitleDiag      = "接続診断";
 // ---- 本文 ----
 inline constexpr const char* kIdlePrompt     = "写真を撮りたい、と言ってね";
 inline constexpr const char* kIdleTouchStart = "タッチで開始";
-// 待機画面の右下の接続状態 (net::LinkState。docs/design/step6-cloud-device.md §3.2「UI の状態」)
-inline constexpr const char* kLinkOffline    = "接続できません";
-inline constexpr const char* kLinkStarting   = "準備中…";
+// 待機画面の右下の接続状態 (net::LinkState。docs/design/step6-cloud-device.md §3.2「UI の状態」)。
+// 枠は 100x24 px (1 行) なので日本語 5 文字以内にする (6 文字以上は折り返して 2 行目が切れる)。
+inline constexpr const char* kLinkOffline    = "接続なし";
+inline constexpr const char* kLinkStarting   = "準備中";
 inline constexpr const char* kLinkOnline     = "接続中";
 inline constexpr const char* kWifiConnecting = "Wi-Fi接続中";  // アプリを開いた直後、純正の startNetwork() を待つ画面
 inline constexpr const char* kAnnounce       = "写真を撮るよ！ いい顔をしてね";

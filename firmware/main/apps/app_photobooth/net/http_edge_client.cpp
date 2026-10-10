@@ -280,6 +280,7 @@ struct EdgeWorker {
                   bool retry_transport, link::RequestKind kind = link::RequestKind::Other);
     int classifyOpenError();
     void waitForClock();
+    bool commandsWaiting() const;
     Reply exchange(const Request& rq);
     bool ensureHttp();
     bool armDeadline();
@@ -332,6 +333,7 @@ struct EdgeWorker {
     std::atomic<bool> ever_ok{false};
     std::atomic<uint8_t> failures{0};  // 連続失敗回数
     std::atomic<bool> starting{false};  // 直近の hello が「準備中」(接続後の応答待ちで期限切れ、または 5xx)
+    std::atomic<bool> session_active{false};  // 判定つきのセッション中 (Flow が setSessionActive で知らせる)
 
     // ---- begin() で決めて以後は読むだけ ----
     EdgeUrl url{};
@@ -371,6 +373,9 @@ struct EdgeWorker {
     uint32_t stats_hello_rtt_sum  = 0;
     uint32_t stats_hello_rtt_max  = 0;
     bool clock_checked            = false;  // https の最初の hello の前の時刻確認を済ませた
+    // 接続の統計 (同上)。https で毎回ハンドシェイクしていないかを実機で確かめる
+    uint32_t stats_conn_new    = 0;  // 新しく接続した (TCP + https なら TLS ハンドシェイク)
+    uint32_t stats_conn_reused = 0;  // keep-alive の接続を使い回した
 };
 
 namespace {
@@ -485,7 +490,15 @@ LinkState HttpEdgeClient::linkState()
     snap.failures   = w.failures.load();
     snap.last_ok_ms = w.last_ok_ms.load();  // now より先に読む (EdgeWorker::online() と同じ理由)
     snap.starting   = w.starting.load();
+    snap.session_active = w.session_active.load();
     return link::linkState(snap, wifiUp(), nowMs(), kOnlineWindowMs);
+}
+
+void HttpEdgeClient::setSessionActive(bool active)
+{
+    if (worker_) {
+        worker_->session_active.store(active);
+    }
 }
 
 void HttpEdgeClient::sessionStart(const Session& s)
@@ -806,6 +819,7 @@ bool EdgeWorker::online() const
     link::LinkSnapshot snap;
     snap.ever_ok  = ever_ok.load();
     snap.failures = failures.load();
+    snap.session_active = session_active.load();
     // last_ok を先に読んでから now を取る (逆だと net タスクの更新で差が負になりうる)。
     snap.last_ok_ms = last_ok_ms.load();
     return link::linkOnline(snap, nowMs(), kOnlineWindowMs);
@@ -903,9 +917,17 @@ void EdgeWorker::run()
             }
         }
 
-        // (4) 何も送っていない間の接続確認 (offline なら復帰の確認)。HELLO_INTERVAL_MS ごと
-        const uint32_t now = nowMs();
-        if (wifi_up && !quit.load() && (!requested_once || now - last_request_ms >= config::HELLO_INTERVAL_MS)) {
+        // (4) 何も送っていない間の接続確認 (offline なら復帰の確認)。HELLO_INTERVAL_MS ごと。
+        // 判定つきのセッション中と依頼が残っているときは送らない (hello は最長 HELLO_TIMEOUT_MS 塞ぐため)。
+        link::HelloGate gate;
+        gate.wifi_up          = wifi_up;
+        gate.quitting         = quit.load();
+        gate.session_active   = session_active.load();
+        gate.commands_waiting = commandsWaiting();
+        gate.requested_once   = requested_once;
+        gate.since_last_ms    = nowMs() - last_request_ms;
+        gate.interval_ms      = config::HELLO_INTERVAL_MS;
+        if (link::shouldSendHello(gate)) {
             sendHello();
             worked = true;
         }
@@ -917,6 +939,11 @@ void EdgeWorker::run()
     }
     dropHttp();
     mclog::tagInfo(kTag, "net task exit (stack free {})", uxTaskGetStackHighWaterMark(nullptr));
+}
+
+bool EdgeWorker::commandsWaiting() const
+{
+    return uxQueueMessagesWaiting(queue) > 0;
 }
 
 bool EdgeWorker::currentGen(uint32_t gen)
@@ -1366,7 +1393,9 @@ EdgeWorker::Reply EdgeWorker::request(const char* op, esp_http_client_method_t m
     }
     Reply r = exchange(rq);
     // 証明書・時刻の失敗は送り直しても変わらないので送り直さない (TLS では再接続 = 再ハンドシェイク)。
-    if (retry_transport && r.status < 0 && r.status != kErrNoWifi && r.status != kErrAborted &&
+    // hello は、1 回目の間に依頼が並んだら送り直さない (依頼を hello の 2 回目の後ろで待たせない)。
+    const bool retry_ok = kind != link::RequestKind::Hello || link::helloRetryAllowed(commandsWaiting());
+    if (retry_transport && retry_ok && r.status < 0 && r.status != kErrNoWifi && r.status != kErrAborted &&
         r.status != kErrCert && r.status != kErrClock) {
         // keep-alive の接続が edge 側で閉じられていた場合など。新しい接続で 1 回だけ送り直す。
         mclog::tagWarn(kTag, "{}: {} ({}); retry once", op, statusText(r.status), r.status);
@@ -1436,6 +1465,12 @@ void EdgeWorker::dropIfPeerClosed()
 {
     // 待っている間に edge (uvicorn) が keep-alive の接続を閉じていたら、送る前に捨てて繋ぎ直す。
     if (http == nullptr || !http_open) {
+        return;
+    }
+    if (url.https) {
+        // https のソケットには暗号化された TLS レコード (TLS 1.3 のセッションチケットなど) が届いていることがあり、
+        // 生のソケットを覗くと「読み残し」と見誤って毎回繋ぎ直す (= 毎回ハンドシェイク)。覗かずに使い、
+        // 相手が閉じていたら次の open / write の失敗を request() の 1 回の再送で吸収する。
         return;
     }
     const int fd = esp_http_client_get_socket(http);
@@ -1520,7 +1555,12 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
         return r;
     }
     http_open   = true;
-    r.connected = true;  // ここから先の期限切れは「接続後の応答待ち」(本文の送信中を除く)
+    r.connected = true;
+    if (was_open) {
+        ++stats_conn_reused;
+    } else {
+        ++stats_conn_new;
+    }  // ここから先の期限切れは「接続後の応答待ち」(本文の送信中を除く)
     if (!was_open) {
         // 本文の最後の端数セグメントが Nagle で遅れないようにする。
         const int fd  = esp_http_client_get_socket(http);
@@ -1808,6 +1848,12 @@ void EdgeWorker::logStats(uint32_t now)
                        online() ? "online" : (starting.load() ? "starting" : "offline"),
                        uxTaskGetStackHighWaterMark(nullptr));
     }
+    if (stats_conn_new > 0 || stats_conn_reused > 0) {
+        mclog::tagInfo(kTag, "connections: new {} reused {} ({})", stats_conn_new, stats_conn_reused,
+                       url.https ? "https" : "http");
+    }
+    stats_conn_new    = 0;
+    stats_conn_reused = 0;
     stats_since_ms = now;
     stats_hello          = 0;
     stats_hello_ok       = 0;

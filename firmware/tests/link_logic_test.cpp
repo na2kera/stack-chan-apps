@@ -212,6 +212,63 @@ void testLinkState()
     expectTrue(!link::linkOnline(w, 0xFFFFFF00u + kWindow, kWindow), "wraparound at window");
 }
 
+void testSessionKeepsOnline()
+{
+    constexpr uint32_t kWindow = 10000;
+    link::LinkSnapshot s;
+    s.ever_ok        = true;
+    s.last_ok_ms     = 1000;
+    s.session_active = true;
+    // セッション中は定期 hello を止めるので、時間が経っても失敗が無ければ online のまま (REVIEW で迷っている間)
+    expectState(link::linkState(s, true, 1000 + kWindow * 6, kWindow), LinkState::Online, "session: long idle");
+    s.failures = link::kOfflineAfterFailures;
+    expectState(link::linkState(s, true, 1000, kWindow), LinkState::Offline, "session: failures still offline");
+    s.failures = 0;
+    expectState(link::linkState(s, false, 1000, kWindow), LinkState::Offline, "session: no wifi");
+    s.ever_ok = false;
+    expectState(link::linkState(s, true, 1000, kWindow), LinkState::Offline, "session: never ok");
+    // セッションが終われば時間の窓に戻る
+    s.ever_ok        = true;
+    s.session_active = false;
+    expectState(link::linkState(s, true, 1000 + kWindow, kWindow), LinkState::Offline, "after session: window");
+}
+
+void testShouldSendHello()
+{
+    link::HelloGate g;
+    g.wifi_up     = true;
+    g.interval_ms = 5000;
+    expectTrue(link::shouldSendHello(g), "first hello right away");
+    g.requested_once = true;
+    g.since_last_ms  = 4999;
+    expectTrue(!link::shouldSendHello(g), "before interval");
+    g.since_last_ms = 5000;
+    expectTrue(link::shouldSendHello(g), "at interval");
+    g.since_last_ms = 60000;
+    expectTrue(link::shouldSendHello(g), "long after");
+
+    link::HelloGate s = g;
+    s.session_active = true;
+    expectTrue(!link::shouldSendHello(s), "no hello during a session");
+    s.requested_once = false;
+    expectTrue(!link::shouldSendHello(s), "no hello during a session even before the first request");
+
+    link::HelloGate c = g;
+    c.commands_waiting = true;
+    expectTrue(!link::shouldSendHello(c), "no hello while commands wait");
+
+    link::HelloGate w = g;
+    w.wifi_up = false;
+    expectTrue(!link::shouldSendHello(w), "no hello without wifi");
+
+    link::HelloGate q = g;
+    q.quitting = true;
+    expectTrue(!link::shouldSendHello(q), "no hello while quitting");
+
+    expectTrue(link::helloRetryAllowed(false), "retry when the queue is empty");
+    expectTrue(!link::helloRetryAllowed(true), "no retry when commands wait");
+}
+
 }  // namespace
 
 int main()
@@ -222,6 +279,8 @@ int main()
     testReplyClass();
     testStartingAfterHello();
     testLinkState();
+    testSessionKeepsOnline();
+    testShouldSendHello();
     std::cout << "link_logic_test: ok\n";
     return 0;
 }

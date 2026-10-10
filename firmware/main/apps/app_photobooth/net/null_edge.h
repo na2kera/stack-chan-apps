@@ -31,6 +31,9 @@ public:
     {
         return LinkState::Offline;
     }
+    void setSessionActive(bool) override
+    {
+    }
     void sessionStart(const Session&) override
     {
     }

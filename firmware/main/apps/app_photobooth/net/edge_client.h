@@ -97,6 +97,10 @@ public:
     virtual bool isOnline()       = 0;
     virtual LinkState linkState() = 0;
 
+    // 判定つきのセッション中か (Flow が毎周期知らせる)。セッション中は定期 hello を送らず
+    // (timeout / candidate / save を hello の後ろで待たせない)、接続状態は frame などの結果で決める。
+    virtual void setSessionActive(bool active) = 0;
+
     // 非同期 (コマンドキュー)。以前のセッションの結果・保留フレームは捨てる。
     virtual void sessionStart(const Session&) = 0;
 

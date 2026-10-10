@@ -105,6 +105,9 @@ bool linkOnline(const LinkSnapshot& s, uint32_t now_ms, uint32_t window_ms)
     if (!s.ever_ok || s.failures >= kOfflineAfterFailures) {
         return false;
     }
+    if (s.session_active) {
+        return true;
+    }
     return now_ms - s.last_ok_ms < window_ms;  // millis の一周をまたいでも差は正しい
 }
 
@@ -117,6 +120,19 @@ LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32
         return LinkState::Online;
     }
     return s.starting ? LinkState::Starting : LinkState::Offline;
+}
+
+bool shouldSendHello(const HelloGate& g)
+{
+    if (!g.wifi_up || g.quitting || g.session_active || g.commands_waiting) {
+        return false;
+    }
+    return !g.requested_once || g.since_last_ms >= g.interval_ms;
+}
+
+bool helloRetryAllowed(bool commands_waiting)
+{
+    return !commands_waiting;
 }
 
 }  // namespace photobooth::net::link
