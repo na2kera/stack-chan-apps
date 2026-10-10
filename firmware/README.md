@@ -126,8 +126,12 @@ SSID / パスワードはコードに書かない。
    「接続先の書式が不正」と出る。
 
    https のときは証明書を常に検証する (ESP-IDF の証明書バンドル。`sdkconfig.defaults` の
-   `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`)。システム時刻が 2025 年より前なら、最初の `hello` の前に SNTP の同期を
-   最大 5 秒待つ。
+   `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`)。有効期間も検証する (`CONFIG_MBEDTLS_HAVE_TIME_DATE=y`)。
+   システム時刻が 2025 年より前なら、最初の `hello` の前に SNTP の同期を最大 5 秒待つ。
+   - `CONFIG_MBEDTLS_HAVE_TIME_DATE` はファーム全体の設定なので、純正の TLS (AI エージェント、手動 OTA) も
+     本体の時刻が正しくないと証明書の検査で失敗する (RTC が戻っていれば起動直後でも動く。SNTP の同期後は動く)。
+   - 手動 OTA の埋め込み証明書 (`main/hal/utils/ota/ota.c`) は 2027-01-20 に期限が切れる。以後は手動 OTA が
+     証明書エラーになるので、証明書を更新する。
 
 3. **edge を LAN 向けに起動する**: `127.0.0.1` で listen すると K151 から届かない。
 
