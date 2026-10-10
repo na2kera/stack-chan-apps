@@ -338,32 +338,45 @@ class EdgeClient:
 
 
 def wait_ready(edge: EdgeClient, max_sec: float, stats: Stats | None) -> dict[str, Any]:
-    """起動時の hello。max_sec > 0 なら 200 が返るまで繰り返す (cold start の計測)。
+    """起動時の hello。max_sec > 0 なら 200 が返るまで最大 max_sec 秒繰り返す (cold start の計測)。
 
     0 なら従来どおり 1 回だけ試す。最初の要求から 200 までの時間と各応答を stats に残す。
+    max_sec は全体の上限: 再試行の待ちと各 hello のタイムアウトを残り時間以下に切り詰める。
     """
     t0 = time.monotonic()
+    deadline = t0 + max_sec
     codes: list[str] = []
+
+    def record(ok: bool) -> None:
+        if stats:
+            key = "ms_to_200" if ok else "ms"
+            stats.cold_hello = {
+                "ok": ok,
+                key: round(_ms_since(t0)),
+                "attempts": len(codes),
+                "codes": list(codes),
+            }
+
     while True:
+        timeout: float | None = None
+        if max_sec > 0:
+            timeout = min(HELLO_TIMEOUT_SEC, deadline - time.monotonic())
         try:
-            info = edge.hello(timeout=HELLO_TIMEOUT_SEC if max_sec > 0 else None)
+            info = edge.hello(timeout=timeout)
         except (httpx.HTTPError, RuntimeError) as exc:
             codes.append(error_key(exc))
-            if max_sec <= 0 or time.monotonic() - t0 >= max_sec:
-                if stats:
-                    stats.cold_hello = {"ok": False, "ms": round(_ms_since(t0)), "codes": codes}
+            if max_sec <= 0 or deadline - time.monotonic() <= 0:
+                record(False)
                 raise
             print(f"hello: {error_key(exc)} (retrying)", file=sys.stderr)
-            time.sleep(HELLO_RETRY_SEC)
+            time.sleep(min(HELLO_RETRY_SEC, deadline - time.monotonic()))
+            if deadline - time.monotonic() <= 0:
+                record(False)
+                raise
             continue
         codes.append("200")
+        record(True)
         if stats:
-            stats.cold_hello = {
-                "ok": True,
-                "ms_to_200": round(_ms_since(t0)),
-                "attempts": len(codes),
-                "codes": codes,
-            }
             # 起動時の hello (cold かもしれない) は warm の RTT に混ぜない
             stats.hello_rtt_ms.clear()
         return info
@@ -611,8 +624,8 @@ def auto_session(
             with contextlib.suppress(httpx.HTTPError, RuntimeError):
                 edge.candidate(sid)
         if auto_save:
-            save_and_poll(edge, sid, opt, None)
-            return "saved"
+            # アップロード失敗・ready 待ちの時間切れは 1 が返る。保存できた回と分けて数える
+            return "saved" if save_and_poll(edge, sid, opt, None) == 0 else "save_failed"
         return "accepted" if accepted else "timeout_candidate"
     finally:
         edge.cancel(sid)  # 保存しなかった候補を edge に残さない (保存後の cancel は無害)
