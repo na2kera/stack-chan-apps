@@ -487,11 +487,15 @@ LinkState HttpEdgeClient::linkState()
     }
     const auto& w = *worker_;
     link::LinkSnapshot snap;
+    // hello_settled を最初に読む。net タスクは hello の結果 (noteSuccess() / noteFailure() による ever_ok・
+    // failures・last_ok_ms と starting) を書いた後に hello_settled を立てるので、true を読めたなら以下で
+    // 読む状態はその結果以降のもの。逆順だと「古い ever_ok=false と新しい hello_settled=true」を組み合わせて
+    // Offline と判定し、最初の hello の成功直後のタッチで診断画面に入りうる。
+    snap.hello_settled = w.hello_settled.load(std::memory_order_acquire);
     snap.ever_ok    = w.ever_ok.load();
     snap.failures   = w.failures.load();
     snap.last_ok_ms = w.last_ok_ms.load();  // now より先に読む (EdgeWorker::online() と同じ理由)
     snap.starting   = w.starting.load();
-    snap.hello_settled = w.hello_settled.load();
     snap.latency_sensitive = w.latency_sensitive.load();
     return link::linkState(snap, wifiUp(), nowMs(), kOnlineWindowMs);
 }
@@ -1226,7 +1230,9 @@ void EdgeWorker::sendHello()
     const bool was_starting    = starting.load();
     const bool now_starting    = link::startingAfterHello(was_starting, cls);
     starting.store(now_starting);
-    if (cls != link::ReplyClass::Aborted && !hello_settled.exchange(true)) {
+    // hello_settled は結果の状態 (request() の中の noteResponse() と上の starting) を書いた後に立てる
+    // (読み側の HttpEdgeClient::linkState() はこれを最初に読む)。
+    if (cls != link::ReplyClass::Aborted && !hello_settled.exchange(true, std::memory_order_acq_rel)) {
         mclog::tagInfo(kTag, "first hello settled (status {}, {} ms)", r.status, rtt);
     }
     if (cls != link::ReplyClass::Aborted) {
@@ -1803,7 +1809,7 @@ void EdgeWorker::noteSuccess()
         // DIAG の「再接続」で置いた「再接続中」は成功で消す。それ以外は「最後の通信エラー」として残す
         // (edge_client.h の lastError())。
         std::lock_guard<std::mutex> lock(mutex);
-        if (strcmp(last_error, str::kNetReconnecting) == 0) {
+        if (link::clearErrorOnSuccess(last_error)) {
             last_error[0] = '\0';
         }
     }

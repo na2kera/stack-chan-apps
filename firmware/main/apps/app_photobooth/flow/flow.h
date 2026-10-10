@@ -26,6 +26,7 @@
 #include "../hw/clips.h"
 #include "../hw/head.h"
 #include "../net/edge_client.h"
+#include "../net/link_logic.h"
 #include "../view/view.h"
 #include "session.h"
 #include "state.h"
@@ -159,6 +160,9 @@ private:
     bool idle_head_fault_drawn_      = false;  // 待機画面に首の警告を描いたか
     view::IdleLink idle_link_drawn_ = view::IdleLink::Offline;  // 待機画面に描いた接続状態
     uint32_t idle_link_checked_ms_  = 0;
+    // 「準備中」(Starting) が続いている時間。待機中のタッチを無視するかに使う (net::link::idleTouch)。
+    net::link::StartingClock starting_clock_;
+    uint32_t starting_elapsed_ms_ = 0;
 
     // COMPOSE の首振りシーケンスの進み (判定なしのときだけ)
     uint8_t sweep_step_ = 0;

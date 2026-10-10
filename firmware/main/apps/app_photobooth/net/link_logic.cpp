@@ -6,8 +6,10 @@
 #include "link_logic.h"
 
 #include <cerrno>
+#include <cstring>
 
 #include "../config.h"
+#include "../view/strings.h"
 
 namespace photobooth::net::link {
 
@@ -125,17 +127,35 @@ LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32
     return s.starting ? LinkState::Starting : LinkState::Offline;
 }
 
-IdleTouch idleTouch(LinkState state)
+uint32_t StartingClock::update(LinkState state, uint32_t now_ms)
+{
+    if (state != LinkState::Starting) {
+        active_ = false;
+        return 0;
+    }
+    if (!active_) {
+        active_   = true;
+        since_ms_ = now_ms;
+    }
+    return now_ms - since_ms_;  // millis の一周をまたいでも差は正しい
+}
+
+IdleTouch idleTouch(LinkState state, uint32_t starting_elapsed_ms)
 {
     switch (state) {
         case LinkState::Online:
             return IdleTouch::Start;
         case LinkState::Starting:
-            return IdleTouch::Ignore;
+            return starting_elapsed_ms < config::STARTING_TOUCH_IGNORE_MS ? IdleTouch::Ignore : IdleTouch::OpenDiag;
         case LinkState::Offline:
             break;
     }
     return IdleTouch::OpenDiag;
+}
+
+bool clearErrorOnSuccess(const char* last_error)
+{
+    return last_error != nullptr && strcmp(last_error, str::kNetReconnecting) == 0;
 }
 
 bool shouldSendHello(const HelloGate& g)

@@ -100,13 +100,13 @@ UI の状態 (待機画面の 1 行):
 | 直近に 2xx | `Online` | 「接続中」 | 「PC接続中」 |
 | DNS / TCP / TLS / 証明書で繋がらない | `Offline` | 「接続なし」 | 「PC未接続」 |
 | 接続は成立 (`esp_http_client_open()` 成功) したが、hello の応答待ちで期限切れ、または Worker が 5xx (cold start、`misconfigured`、`upstream_error`) | `Starting` | **「準備中」** (新規) | 「PC未接続」 |
-| 最初の hello の結果が出るまで (edge 有効ビルドで Wi-Fi が上がっていて、net タスクを始めてから hello の結果が 1 つも無い間。時刻の同期待ちと hello の内部再送の間も含む) | `Starting` | 「準備中」。**タッチは無視** (診断を開かず待機のまま。予約して自動撮影もしない) | 「PC未接続」 |
+| 最初の hello の結果が出るまで (edge 有効ビルドで Wi-Fi が上がっていて、net タスクを始めてから hello の結果が 1 つも無い間。時刻の同期待ちと hello の内部再送の間も含む) | `Starting` | 「準備中」。**`Starting` が続いて 20 秒 (`STARTING_TOUCH_IGNORE_MS`) まではタッチを無視** (診断を開かず待機のまま。予約して自動撮影もしない)。以降のタッチは診断を開く | 「PC未接続」 |
 | 401 | `Offline` | 「認証エラー」(診断) | 同じ |
 | ERROR の `kErrNoPc` / `kErrEdgeLost` / `kNetConnectFailed` / `kNetNoResponse` | | 「PC」を外す (「接続が無いため保存できません」「接続が切れました」「接続できません」「応答がありません」) | PC 前提 |
 
-待機中のタッチ (画面・頭部) の扱いは `LinkState` で決める (`net/link_logic` の `idleTouch()`): `Online` は判定つきの撮影を始める、`Starting` は無視する、`Offline` (DNS / TCP / TLS / 証明書などの確定失敗、401、Wi-Fi なし) は診断画面を開く。
+待機中のタッチ (画面・頭部) の扱いは `LinkState` で決める (`net/link_logic` の `idleTouch()`): `Online` は判定つきの撮影を始める、`Starting` は連続 20 秒 (`config::STARTING_TOUCH_IGNORE_MS`。hello の操作全体の上限約 16 秒より少し長い) までは無視し、以降は診断画面を開く (5xx が続く `misconfigured` / `upstream_error` でも再接続・判定なしの撮影に入れるように。Flow は `Starting` が続いている時間を `link::StartingClock` で測り、`Starting` を抜けたら 0 に戻す。自動では診断に遷移しない)、`Offline` (DNS / TCP / TLS / 証明書などの確定失敗、401、Wi-Fi なし) は診断画面を開く。
 
-`Starting` が続く上限は設けない (hello を 5 秒ごとに送り続ける)。診断の `last_error` に追加する文言: 「DNS失敗」「証明書エラー」「時刻未同期」「TLS接続失敗」「接続先の書式が不正」「準備中 (応答待ち)」。
+`Starting` の表示が続く上限は設けない (hello を 5 秒ごとに送り続ける。タッチの扱いだけ 20 秒で切り替わる)。診断の `last_error` に追加する文言: 「DNS失敗」「証明書エラー」「時刻未同期」「TLS接続失敗」「接続先の書式が不正」「準備中 (応答待ち)」。
 
 ### 3.3 ファームの JPEG (6c)
 

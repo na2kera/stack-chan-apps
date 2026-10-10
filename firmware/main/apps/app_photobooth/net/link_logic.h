@@ -111,14 +111,30 @@ bool linkOnline(const LinkSnapshot& s, uint32_t now_ms, uint32_t window_ms);
 // (hello_settled でない間。クラウドでは cold start + TLS で 2〜10 秒) は Starting。
 LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32_t window_ms);
 
+// Starting が連続している時間を測る。Starting 以外を渡すとリセットする。呼び出し側 (Flow) が毎周期
+// 今の LinkState を渡し、戻り値 (Starting が続いている ms。Starting でなければ 0) を idleTouch() に渡す。
+class StartingClock {
+public:
+    uint32_t update(LinkState state, uint32_t now_ms);
+
+private:
+    bool active_       = false;
+    uint32_t since_ms_ = 0;
+};
+
 // 待機中のタッチ (画面・頭部) をどう扱うか。
 enum class IdleTouch : uint8_t {
     Start,     // 判定つきの撮影を始める (Online)
-    Ignore,    // 何もしない (Starting: 最初の hello の結果待ち・cold start。予約もしない)
-    OpenDiag,  // 診断画面を開く (Offline: DNS / TCP / TLS / 証明書などで繋がらない)
+    Ignore,    // 何もしない (Starting が STARTING_TOUCH_IGNORE_MS 未満: 最初の hello の結果待ち・cold start。予約もしない)
+    OpenDiag,  // 診断画面を開く (Offline: DNS / TCP / TLS / 証明書などで繋がらない。Starting が長く続いたときも)
 };
 
-IdleTouch idleTouch(LinkState state);
+// starting_elapsed_ms: Starting が連続している時間 (StartingClock::update() の戻り値)。
+IdleTouch idleTouch(LinkState state, uint32_t starting_elapsed_ms);
+
+// net タスクが 2xx を受けたとき、診断の last_error を消すか。DIAG の「再接続」で置いた「再接続中」
+// (str::kNetReconnecting と完全一致) だけを消し、他のエラーは「最後の通信エラー」として残す。
+bool clearErrorOnSuccess(const char* last_error);
 
 // ---- 定期 hello ----
 
