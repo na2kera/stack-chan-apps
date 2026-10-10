@@ -276,6 +276,7 @@ void Flow::startSession(uint32_t now_ms, bool judged)
     candidate_.clear();
     session_.start(now_ms);
     judged_             = judged;
+    photo_ready_        = false;  // QR 画面からの撮り直し: 前のセッションの「公開済み」を持ち越さない
     closer_played_      = false;
     review_wait_        = ReviewWait::None;
     uploading_captured_ = false;
@@ -384,8 +385,10 @@ void Flow::drainCandidate()
 
 void Flow::update(const shared::hw::Event& ev, uint32_t now_ms)
 {
-    // 判定つきのセッション中は net タスクが定期 hello を止める (後ろに並ぶ依頼を待たせない)。
-    edge_.setSessionActive(session_.active && judged_);
+    // 判定つきの撮影の開始から写真の準備完了までは、net タスクが定期 hello を止める (後ろに並ぶ
+    // timeout / candidate / save / photo を待たせない)。QR を出した後は hello を再開して warm を保ち、
+    // edge の停止にも気づけるようにする (「撮り直す」が古い online 判定で始まらないように)。
+    edge_.setLatencySensitive(session_.active && judged_ && !photo_ready_);
     head_.update(now_ms);
     if (exit_requested_) {
         return;

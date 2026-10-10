@@ -212,25 +212,25 @@ void testLinkState()
     expectTrue(!link::linkOnline(w, 0xFFFFFF00u + kWindow, kWindow), "wraparound at window");
 }
 
-void testSessionKeepsOnline()
+void testLatencySensitiveKeepsOnline()
 {
     constexpr uint32_t kWindow = 10000;
     link::LinkSnapshot s;
     s.ever_ok        = true;
     s.last_ok_ms     = 1000;
-    s.session_active = true;
-    // セッション中は定期 hello を止めるので、時間が経っても失敗が無ければ online のまま (REVIEW で迷っている間)
-    expectState(link::linkState(s, true, 1000 + kWindow * 6, kWindow), LinkState::Online, "session: long idle");
+    s.latency_sensitive = true;
+    // 撮影〜写真の準備完了の間は定期 hello を止めるので、時間が経っても失敗が無ければ online のまま (REVIEW で迷っている間)
+    expectState(link::linkState(s, true, 1000 + kWindow * 6, kWindow), LinkState::Online, "latency sensitive: long idle");
     s.failures = link::kOfflineAfterFailures;
-    expectState(link::linkState(s, true, 1000, kWindow), LinkState::Offline, "session: failures still offline");
+    expectState(link::linkState(s, true, 1000, kWindow), LinkState::Offline, "latency sensitive: failures still offline");
     s.failures = 0;
-    expectState(link::linkState(s, false, 1000, kWindow), LinkState::Offline, "session: no wifi");
+    expectState(link::linkState(s, false, 1000, kWindow), LinkState::Offline, "latency sensitive: no wifi");
     s.ever_ok = false;
-    expectState(link::linkState(s, true, 1000, kWindow), LinkState::Offline, "session: never ok");
-    // セッションが終われば時間の窓に戻る
+    expectState(link::linkState(s, true, 1000, kWindow), LinkState::Offline, "latency sensitive: never ok");
+    // 写真の準備が終わった後 (QR 表示中) とセッションの後は時間の窓に戻る
     s.ever_ok        = true;
-    s.session_active = false;
-    expectState(link::linkState(s, true, 1000 + kWindow, kWindow), LinkState::Offline, "after session: window");
+    s.latency_sensitive = false;
+    expectState(link::linkState(s, true, 1000 + kWindow, kWindow), LinkState::Offline, "after photo ready (not latency sensitive): window");
 }
 
 void testShouldSendHello()
@@ -248,10 +248,10 @@ void testShouldSendHello()
     expectTrue(link::shouldSendHello(g), "long after");
 
     link::HelloGate s = g;
-    s.session_active = true;
-    expectTrue(!link::shouldSendHello(s), "no hello during a session");
+    s.latency_sensitive = true;
+    expectTrue(!link::shouldSendHello(s), "no hello while latency sensitive (shooting to photo ready)");
     s.requested_once = false;
-    expectTrue(!link::shouldSendHello(s), "no hello during a session even before the first request");
+    expectTrue(!link::shouldSendHello(s), "no hello while latency sensitive even before the first request");
 
     link::HelloGate c = g;
     c.commands_waiting = true;
@@ -279,7 +279,7 @@ int main()
     testReplyClass();
     testStartingAfterHello();
     testLinkState();
-    testSessionKeepsOnline();
+    testLatencySensitiveKeepsOnline();
     testShouldSendHello();
     std::cout << "link_logic_test: ok\n";
     return 0;

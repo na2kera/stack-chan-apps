@@ -98,12 +98,13 @@ struct LinkSnapshot {
     uint8_t failures    = 0;      // 連続失敗回数
     uint32_t last_ok_ms = 0;      // 最後に 2xx を受けた時刻
     bool starting       = false;  // 直近の hello が「準備中」
-    bool session_active = false;  // 判定つきのセッション中 (定期 hello を止めている)
+    bool latency_sensitive = false;  // hello が後続の依頼を妨げる段階 (定期 hello を止めている)
 };
 
 // 連続失敗が上限未満で、直近 (window_ms 以内) に 2xx を受けていれば online。
-// 判定つきのセッション中は定期 hello を送らないので時間の窓は見ず、frame などの結果 (連続失敗) だけで決める
-// (REVIEW で利用者が迷っている間に online が切れて「撮り直す」が失敗しないように)。
+// latency_sensitive の間 (判定つきの撮影〜写真の準備完了まで) は定期 hello を送らないので時間の窓は見ず、
+// frame などの結果 (連続失敗) だけで決める (REVIEW で迷っている間に online が切れて「撮り直す」が
+// 失敗しないように)。写真の準備が終わった後 (QR 表示中) は hello を再開し、時間の窓に戻る。
 bool linkOnline(const LinkSnapshot& s, uint32_t now_ms, uint32_t window_ms);
 // 待機画面の 3 状態。Wi-Fi が無ければ Offline。
 LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32_t window_ms);
@@ -113,15 +114,15 @@ LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32
 struct HelloGate {
     bool wifi_up           = false;
     bool quitting          = false;  // アプリを閉じる途中
-    bool session_active    = false;  // 判定つきのセッション中 (timeout / candidate / save が後ろに並びうる)
+    bool latency_sensitive = false;  // hello が後続の timeout / candidate / save / photo を妨げる段階
     bool commands_waiting  = false;  // コマンドキューに依頼が残っている
     bool requested_once    = false;  // このタスクで一度でもリクエストを送った
     uint32_t since_last_ms = 0;      // 最後のリクエストからの経過
     uint32_t interval_ms   = 0;      // HELLO_INTERVAL_MS
 };
 
-// 定期 hello を今送るか。hello は 1 試行最長 HELLO_TIMEOUT_MS で net タスクを塞ぐので、セッション中と
-// 依頼が残っているときは送らない (セッション中の接続状態は frame などの結果で分かる)。
+// 定期 hello を今送るか。hello は 1 試行最長 HELLO_TIMEOUT_MS で net タスクを塞ぐので、latency_sensitive の間と
+// 依頼が残っているときは送らない (その間の接続状態は frame などの結果で分かる)。
 bool shouldSendHello(const HelloGate& g);
 
 // hello の 1 回目が通信失敗のとき 2 回目を送るか。依頼が並んでいれば送らない (依頼を待たせない)。

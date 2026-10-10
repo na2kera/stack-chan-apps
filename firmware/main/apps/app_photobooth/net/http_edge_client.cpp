@@ -333,7 +333,7 @@ struct EdgeWorker {
     std::atomic<bool> ever_ok{false};
     std::atomic<uint8_t> failures{0};  // 連続失敗回数
     std::atomic<bool> starting{false};  // 直近の hello が「準備中」(接続後の応答待ちで期限切れ、または 5xx)
-    std::atomic<bool> session_active{false};  // 判定つきのセッション中 (Flow が setSessionActive で知らせる)
+    std::atomic<bool> latency_sensitive{false};  // hello を止める段階 (Flow が setLatencySensitive で知らせる)
 
     // ---- begin() で決めて以後は読むだけ ----
     EdgeUrl url{};
@@ -490,14 +490,14 @@ LinkState HttpEdgeClient::linkState()
     snap.failures   = w.failures.load();
     snap.last_ok_ms = w.last_ok_ms.load();  // now より先に読む (EdgeWorker::online() と同じ理由)
     snap.starting   = w.starting.load();
-    snap.session_active = w.session_active.load();
+    snap.latency_sensitive = w.latency_sensitive.load();
     return link::linkState(snap, wifiUp(), nowMs(), kOnlineWindowMs);
 }
 
-void HttpEdgeClient::setSessionActive(bool active)
+void HttpEdgeClient::setLatencySensitive(bool active)
 {
     if (worker_) {
-        worker_->session_active.store(active);
+        worker_->latency_sensitive.store(active);
     }
 }
 
@@ -819,7 +819,7 @@ bool EdgeWorker::online() const
     link::LinkSnapshot snap;
     snap.ever_ok  = ever_ok.load();
     snap.failures = failures.load();
-    snap.session_active = session_active.load();
+    snap.latency_sensitive = latency_sensitive.load();
     // last_ok を先に読んでから now を取る (逆だと net タスクの更新で差が負になりうる)。
     snap.last_ok_ms = last_ok_ms.load();
     return link::linkOnline(snap, nowMs(), kOnlineWindowMs);
@@ -918,11 +918,11 @@ void EdgeWorker::run()
         }
 
         // (4) 何も送っていない間の接続確認 (offline なら復帰の確認)。HELLO_INTERVAL_MS ごと。
-        // 判定つきのセッション中と依頼が残っているときは送らない (hello は最長 HELLO_TIMEOUT_MS 塞ぐため)。
+        // 撮影〜写真の準備完了の間と依頼が残っているときは送らない (hello は最長 HELLO_TIMEOUT_MS 塞ぐため)。
         link::HelloGate gate;
         gate.wifi_up          = wifi_up;
         gate.quitting         = quit.load();
-        gate.session_active   = session_active.load();
+        gate.latency_sensitive   = latency_sensitive.load();
         gate.commands_waiting = commandsWaiting();
         gate.requested_once   = requested_once;
         gate.since_last_ms    = nowMs() - last_request_ms;

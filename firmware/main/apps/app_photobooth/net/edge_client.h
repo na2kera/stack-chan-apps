@@ -97,9 +97,10 @@ public:
     virtual bool isOnline()       = 0;
     virtual LinkState linkState() = 0;
 
-    // 判定つきのセッション中か (Flow が毎周期知らせる)。セッション中は定期 hello を送らず
-    // (timeout / candidate / save を hello の後ろで待たせない)、接続状態は frame などの結果で決める。
-    virtual void setSessionActive(bool active) = 0;
+    // hello が後続の依頼 (timeout / candidate / save / photo) を妨げる段階か (Flow が毎周期知らせる)。
+    // 判定つきの撮影の開始から写真の準備完了 (QR を出す) までが true。その間は定期 hello を送らず、
+    // 接続状態は frame などの結果で決める。QR 表示中は false (hello で warm を保ち、停止にも気づく)。
+    virtual void setLatencySensitive(bool active) = 0;
 
     // 非同期 (コマンドキュー)。以前のセッションの結果・保留フレームは捨てる。
     virtual void sessionStart(const Session&) = 0;

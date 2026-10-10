@@ -152,7 +152,8 @@ SSID / パスワードはコードに書かない。
    - シリアルログの `PB-Edge: send N frames ... (x.x fps), rtt avg ...` (5 秒ごと) で送信 fps と往復時間が分かる。
      5 秒ごとに `PB-Edge: hello N (ok N, starting N) rtt avg ... max ... ms, link ..., stack free ...` と
      `PB-Edge: connections: new N reused M` も出る (https で new ばかりなら毎回 TLS ハンドシェイクしている)。
-     定期 `hello` は判定つきの撮影中は送らない (撮影中の接続状態は frame などの結果で決まる)。
+     定期 `hello` は判定つきの撮影の開始から写真の準備完了 (QR 表示) までは送らない (その間の接続状態は
+     frame などの結果で決まる)。QR 表示中は送る。
      鍵・URL・トークン・画像はログに出さない。
 
 **HTTPS を quick tunnel で試す** (クラウドの edge を立てずに、PC の edge を HTTPS で公開する): Cloudflare Tunnel の
