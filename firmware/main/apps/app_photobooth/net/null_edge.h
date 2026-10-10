@@ -31,6 +31,9 @@ public:
     {
         return LinkState::Offline;
     }
+    void setLatencySensitive(bool) override
+    {
+    }
     void sessionStart(const Session&) override
     {
     }

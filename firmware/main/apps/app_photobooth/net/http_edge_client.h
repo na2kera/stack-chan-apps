@@ -49,6 +49,7 @@ public:
 
     bool isOnline() override;
     LinkState linkState() override;
+    void setLatencySensitive(bool active) override;
     void sessionStart(const Session& s) override;
     bool offerFrame(const Session& s, const hw::FrameView& frame, int servo_x, int servo_y, Phase phase) override;
     bool pollResult(FrameResult& out) override;

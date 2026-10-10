@@ -78,3 +78,10 @@ CONFIG_LV_USE_SNAPSHOT=y
 CONFIG_LV_USE_IMGFONT=y
 CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n
+
+# app_photobooth の https (docs/design/step6-cloud-device.md §3.2)。ESP-IDF の既定値だが、純正の subtree 更新で落ちないよう明示する。
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# 証明書の有効期間 (期限切れ・有効期間の開始前) を検証する (ESP-IDF の既定は無効で、期限を見ない)。
+# ファーム全体の設定なので、純正の TLS (AI エージェント、OTA) も本体の時刻に依存するようになる。
+CONFIG_MBEDTLS_HAVE_TIME_DATE=y

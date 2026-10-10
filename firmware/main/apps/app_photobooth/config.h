@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-// edge (PC) と通信するビルドか (docs/design/fw-app-step2.md §2)。
+// edge と通信するビルドか (docs/design/fw-app-step2.md §2)。
 //   - config_local.h があれば有効。無ければ無効 (ステップ1 と同じ単体動作・固定 URL)。
 //   - `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` なら config_local.h があっても無効
 //     (戻すときは `idf.py -DPHOTOBOOTH_NO_EDGE=0 build`。CMake のキャッシュに残るため)。
@@ -34,12 +34,16 @@ constexpr uint8_t MAX_FACES           = 4;     // 「4人までだよ」の人�
 constexpr uint32_t SHUTTER_FLASH_MS = 150;   // 画面を白く光らせる時間
 // SHUTTER で撮れた写真 (候補 JPEG) を取りに行くときの期限。1 回だけ試し、送り直さない。
 // この依頼の後ろに save が並ぶので、短くして save を待たせない (codex レビュー)。
-constexpr uint32_t SHUTTER_CANDIDATE_TIMEOUT_MS = 800;
+// インターネット越し (クラウドの edge) の往復を見込んで 1.5 秒 (docs/design/step6-cloud-device.md §3.2)。
+constexpr uint32_t SHUTTER_CANDIDATE_TIMEOUT_MS = 1500;
 constexpr uint32_t CAPTURED_HOLD_MS = 1000;  // 撮れた写真を止めて見せる最短の時間 (captured.wav が終わるまでは延びる)
 
-// ---- edge (PC) との通信 (docs/protocol.md「タイムアウトと再試行」) ----
+// ---- edge との通信 (docs/protocol.md「タイムアウトと再試行」、docs/design/step6-cloud-device.md §3.2) ----
 constexpr bool EDGE_ENABLED          = PHOTOBOOTH_EDGE_ENABLED != 0;
-constexpr uint32_t EDGE_TIMEOUT_MS   = 3000;   // 1 リクエストのタイムアウト
+constexpr uint32_t EDGE_TIMEOUT_MS   = 3000;   // 1 リクエストのタイムアウト (hello と SHUTTER の候補以外)
+// hello の 1 試行の期限。TLS ハンドシェイク + Worker + cold start を見込む。通信失敗なら 1 回だけ送り直す
+// (全体で約 16 秒)。接続後の応答待ちで切れたら「準備中」として扱い、次の hello で再試行する。
+constexpr uint32_t HELLO_TIMEOUT_MS  = 8000;
 constexpr uint32_t HELLO_INTERVAL_MS = 5000;   // 通信が無いときの hello の間隔 (接続確認)
 constexpr uint32_t UPLOAD_WAIT_MS    = 15000;  // UPLOADING で写真の準備を待つ上限
 constexpr uint8_t UPLOAD_RETRY       = 3;      // 保存 (review save) の送信回数の上限 (session ごと)

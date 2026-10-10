@@ -68,18 +68,19 @@ HTTPS 化と JPEG 化は同時にしない (切り分けのため)。各サブ�
 
 | 項目 | 値 | 根拠 |
 | --- | --- | --- |
-| 接続先の設定 | `config_local.h` の `EDGE_HOST` / `EDGE_PORT` を **`EDGE_BASE_URL`** (例 `"https://stackchan-edge.xxx.workers.dev"` / `"http://192.168.0.167:8765"`) に置き換える。**意図的な破壊変更**: `net/edge_config.h` で `EDGE_HOST` が定義されていて `EDGE_BASE_URL` が無ければ `#error "config_local.h: EDGE_HOST/EDGE_PORT は EDGE_BASE_URL に変わりました (firmware/README.md「edge と繋ぐ」)"` で止める。`config_local.example.h` と `firmware/README.md` に移行手順 (`http://<旧 EDGE_HOST>:<旧 EDGE_PORT>` と書く) を載せる | 設定ファイルは 1 つ (ユーザーの手元) しか無いので二重対応より明確なエラーのほうが安全 |
+| 接続先の設定 | `config_local.h` の `EDGE_HOST` / `EDGE_PORT` を **`EDGE_BASE_URL`** (例 `"https://stackchan-edge.xxx.workers.dev"` / `"http://192.168.0.167:8765"`) に置き換える。**意図的な破壊変更**: `net/edge_config.h` で `EDGE_HOST` が定義されていて `EDGE_BASE_URL` が無ければ `#error "config_local.h: EDGE_HOST/EDGE_PORT は EDGE_BASE_URL に変わりました (firmware/README.md「edge と繋ぐ」)"` で止める。`config_local.example.h` と `firmware/README.md` に移行手順 (`http://<旧 EDGE_HOST>:<旧 EDGE_PORT>` と書く) を載せる。受け付ける書き方は `namespace photobooth::config` の中の `constexpr`、グローバル名前空間の `constexpr`、`#define` の 3 つ (`firmware/tests/edge_config_test.cpp` のフィクスチャで確かめる)。`constexpr` の旧形式はプリプロセッサから見えないので、`#error` の代わりに同じ文言の `static_assert` で止める | 設定ファイルは 1 つ (ユーザーの手元) しか無いので二重対応より明確なエラーのほうが安全 |
 | URL の文法 (`net/edge_url`) | `scheme "://" host [":" port] ["/"]`。scheme は `http` / `https` (大小文字を区別しない。小文字に正規化)。host は DNS 名か IPv4 (1〜64 文字。IPv6 と userinfo は不可)。port は 1〜65535、省略時は http 80 / https 443。末尾の `/` は 1 つだけ許して捨てる。path・query・fragment があれば不正。不正なら `begin()` が失敗し、診断に「接続先の書式が不正」 | 既存コードの request() が path を差し替える構造 (host / port / path を別に持つ) を変えない。純粋関数にしてホストでテストする |
 | transport | scheme が `https` なら `HTTP_TRANSPORT_OVER_SSL` + `crt_bundle_attach = esp_crt_bundle_attach`、`http` なら従来の `HTTP_TRANSPORT_OVER_TCP`。`esp_http_client_config_t` は `url` ではなく `host` / `port` / `path` に入れる | 上と同じ |
 | 証明書検証 | **常に検証する**。`skip_cert_common_name_check` は使わない。`CONFIG_ESP_TLS_INSECURE` は無効のまま。https の接続先はホスト名で書く (IP での https は不可。`edge_url` で弾く) | SNI と CN 検証に必要 |
-| 証明書バンドル | `firmware/sdkconfig.defaults` に `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y` と `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y` (今の生成済み `sdkconfig` と同じ) を明示する | 今は生成済み `sdkconfig` にしか無い (ESP-IDF の既定値)。純正 OTA の `crt_bundle_attach` は `CONFIG_EXAMPLE_USE_CERT_BUNDLE` が未定義で使われていない (`firmware/main/hal/utils/ota/ota.c:8,140`) ので「既存の利用例」ではない。追跡対象に固定して、純正の subtree 更新で落ちないようにする |
+| 証明書バンドル | `firmware/sdkconfig.defaults` に `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y` と `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y` (今の生成済み `sdkconfig` と同じ) を明示する。あわせて **`CONFIG_MBEDTLS_HAVE_TIME_DATE=y`** を加える (ESP-IDF の既定は無効で、mbedTLS が証明書の有効期間を見ない。無効のままだと期限切れの証明書が通り、「時刻未同期」も起きない)。ファーム全体の設定なので **純正の TLS (AI エージェント、手動 OTA) にも効く**: 本体の時刻が不正 (RTC が戻らず SNTP も未同期) な間は、純正の TLS も証明書の有効期間の検査で失敗する (試験 25)。手動 OTA の埋め込み証明書 (`firmware/main/hal/utils/ota/ota.c:28-46`) は 2027-01-20 に期限が切れ、以後は手動 OTA が証明書エラーになる | 今は生成済み `sdkconfig` にしか無い (ESP-IDF の既定値)。純正 OTA の `crt_bundle_attach` は `CONFIG_EXAMPLE_USE_CERT_BUNDLE` が未定義で使われていない (`firmware/main/hal/utils/ota/ota.c:8,140`) ので「既存の利用例」ではない。追跡対象に固定して、純正の subtree 更新で落ちないようにする |
 | 時刻 | 純正は起動時に RTC からシステム時刻を復元し (`firmware/main/hal/hal_rtc.cpp:40`)、Wi-Fi 接続後に SNTP を始めるが同期を待たない (`hal_network.cpp:31-43`)。ファームは **https のときだけ、システム時刻が不正 (2025-01-01 より前) なら最初の hello の前に同期を最大 5 秒待つ**。時刻が妥当なら待たない。待ち切れなければそのまま hello を試す | RTC が妥当なら待たないので起動が遅くならない。1970 年のままだと証明書の有効期間の検査で失敗する |
 | エラーの分類 | `esp_http_client_open()` の失敗は `esp_http_client_get_and_clear_last_tls_error(http, &tls_err, &cert_flags)` と `esp_http_client_get_errno(http)` で分ける: DNS 失敗 (`ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME` / `getaddrinfo` 失敗)、TCP 失敗 (errno `ECONNREFUSED` / `ETIMEDOUT` / `EHOSTUNREACH`)、証明書エラー (`cert_flags != 0`)、TLS 接続失敗 (その他の `tls_err`)。**「時刻未同期」は `cert_flags` に `MBEDTLS_X509_BADCERT_EXPIRED` か `BADCERT_FUTURE` があり、かつシステム時刻が不正なとき** だけ。時刻が妥当なら「証明書エラー」 | 現状は `ESP_ERR_HTTP_CONNECT` を一律 `kErrConnect` にしている (`http_edge_client.cpp:1367`)。expired の試験と時刻未同期の試験は別 |
 | タイムアウト | 1 試行と操作全体を分ける (下表)。hello は接続後の応答待ちで切れたら `Starting` 扱い (下の UI) | TLS ハンドシェイク (ESP32-S3 で 1〜2 秒) + Cloudflare 往復 + cold start を 3 秒には収められない |
+| 定期 hello を止める範囲 | 判定つきの撮影の開始から写真の準備完了 (QR を出す) まで (`EdgeClient::setLatencySensitive`。Flow が `session.active && judged && !photo_ready` を毎周期知らせる) は定期 hello を送らず、その間の online は時間の窓ではなく連続失敗の回数で決める。依頼がキューに残っているときも送らない。hello の 1 回目の間に依頼が並んだら 2 回目 (再送) を送らない。QR 表示中と待機中は 5 秒ごとに送る (warm 維持と停止の検知) | hello は 1 試行最長 8 秒 net タスクを塞ぎ、後ろに並ぶ timeout / candidate / save / photo を待たせる (REVIEW の待ち上限 9 秒を破る)。QR 表示中に止めると edge の停止に気づかず、「撮り直す」が古い online 判定で始まる |
 | keep-alive | 1 本の持続接続を使い回す (現状)。相手側の切断は既存の「新しい接続で 1 回だけ再送」で吸収する。TLS では再接続 = 再ハンドシェイクなので、再送 1 回の上限は維持する。Cloudflare の HTTP/1.1 keep-alive の上限は 400 秒だが、5 秒ごとの hello がある限り届かない | 既存設計 (fw-app-step2 §4.5) |
 | メモリ | TLS で mbedTLS のバッファ (動的、`CONFIG_MBEDTLS_DYNAMIC_BUFFER=y`) が増える。`kTaskStack` は 8192 → **12288** を初期値にし、`logStats()` の high-water の **最小余裕 2 KiB 以上** を保てる最小値に決め直す。`kHttpRxBuf` / `kHttpTxBuf` は変えない | TLS のレコード処理は内部 RAM を使う |
 | 診断画面 | `Diagnostics::edge_host[64]` / `edge_port` を **`edge_url[96]`** (scheme + host + port。path と鍵は含めない) に置き換え、`last_error` の文言を追加 (下) | 接続先が URL になるため |
-| 接続状態 | `LinkState` を `Offline` / `Starting` / `Online` の 3 値にし、`flow/flow.cpp:478` の変換、`view/view.h:36` の `IdleLink`、`view/view.cpp:45` の表示も 3 値にする | 「準備中…」を出すため |
+| 接続状態 | `LinkState` を `Offline` / `Starting` / `Online` の 3 値にし、`flow/flow.cpp:478` の変換、`view/view.h:36` の `IdleLink`、`view/view.cpp:45` の表示も 3 値にする | 「準備中」を出すため |
 | UI の文言 | PC 前提の文言をクラウドでも通じる言い方に変える (下表)。接続先が http か https かで文言は変えない | `view/strings.h:32` 以降は全面的に PC 前提 |
 
 タイムアウト表 (6b の初期値。6d で実測して決め直す):
@@ -97,8 +98,8 @@ UI の状態 (待機画面の 1 行):
 | 条件 | `LinkState` | 文言 | 今の文言 |
 | --- | --- | --- | --- |
 | 直近に 2xx | `Online` | 「接続中」 | 「PC接続中」 |
-| DNS / TCP / TLS / 証明書で繋がらない | `Offline` | 「接続できません」 | 「PC未接続」 |
-| 接続は成立 (`esp_http_client_open()` 成功) したが、hello の応答待ちで期限切れ、または Worker が 5xx (cold start、`misconfigured`、`upstream_error`) | `Starting` | **「準備中…」** (新規) | 「PC未接続」 |
+| DNS / TCP / TLS / 証明書で繋がらない | `Offline` | 「接続なし」 | 「PC未接続」 |
+| 接続は成立 (`esp_http_client_open()` 成功) したが、hello の応答待ちで期限切れ、または Worker が 5xx (cold start、`misconfigured`、`upstream_error`) | `Starting` | **「準備中」** (新規) | 「PC未接続」 |
 | 401 | `Offline` | 「認証エラー」(診断) | 同じ |
 | ERROR の `kErrNoPc` / `kErrEdgeLost` / `kNetConnectFailed` / `kNetNoResponse` | | 「PC」を外す (「接続が無いため保存できません」「接続が切れました」「接続できません」「応答がありません」) | PC 前提 |
 
@@ -139,7 +140,7 @@ K151 では `logStats()` の 5 秒ごとのログから、`jpeg_encode_ms`、TLS
 | 項目 | 基準 |
 | --- | --- |
 | warm の送信 fps (K151、JPEG) | ≥ 2 (fw-app-step2 §5 と同じ)。符号化 + 通信 + 解析の成功 1 サイクル p50 ≤ 500 ms (件数 ≥ 500) |
-| cold start から hello 200 まで | ≤ 60 秒。接続が成立してからは「準備中…」が出る |
+| cold start から hello 200 まで | ≤ 60 秒。接続が成立してからは「準備中」が出る |
 | warm hello RTT (K151) | p95 ≤ 1500 ms (件数 ≥ 100) |
 | SHUTTER の save 開始遅延 | candidate 取得込みで 2 秒以内 |
 | 内部 RAM | 最小空き ≥ 40 KiB、最大連続領域 ≥ 16 KiB、かつ TLS の再接続 (試験 17) が成功する |
@@ -195,11 +196,12 @@ firmware/
 | 13 | 証明書が検証できない相手 (`expired.badssl.com`、`self-signed.badssl.com`) | 診断に「証明書エラー」。接続は成立しない | 6b |
 | 14 | 時刻未同期 (SNTP を通さない Wi-Fi、RTC を 1970 年にして起動) | 「時刻未同期」が出る。同期後に復帰 | 6b |
 | 15 | DNS 失敗 (存在しないホスト名) / TCP 失敗 (閉じたポート) | 「DNS失敗」/「接続できません」 | 6b |
-| 16 | Wi-Fi 断 → 復帰 | 「接続できません」→「接続中」 | 6b |
+| 16 | Wi-Fi 断 → 復帰 | 待機画面が「接続なし」→「接続中」 | 6b |
 | 17 | 相手側の切断: (a) PC の edge プロセスを再起動、(b) `cloudflared` を止めて再起動 | 1 回の再送で復帰 (a)。(b) は URL が変わるので旧 URL が確実に失敗する | 6b |
-| 18 | cold start の模擬: edge をモデル読み込み中にする (`cloudflared` は上げたまま edge を再起動) | 「準備中…」→「接続中」 | 6b |
+| 18 | cold start の模擬: edge をモデル読み込み中にする (`cloudflared` は上げたまま edge を再起動) | 「準備中」→「接続中」 | 6b |
 | 19 | アプリを閉じる (通信中) | 1 秒で画面が閉じる。再度開ける (タスク残存中は「前の通信が終わっていません」) | 6b |
 | 20 | タイムアウト境界: hello 8 秒、frame 3 秒、SHUTTER 1.5 秒 (edge 側で応答を遅らせるデバッグ設定) | それぞれの文言と状態になる | 6b |
+| 25 | `CONFIG_MBEDTLS_HAVE_TIME_DATE=y` にした後の純正の TLS: AI エージェントと手動 OTA を (a) RTC が正常なとき (b) 起動直後の未同期のとき (RTC を 1970 年にして起動) に使う | (a) 従来どおり動く。(b) 同期が済むまで失敗し得るが、同期後は動く。手動 OTA は埋め込み証明書の期限 (2027-01-20) までに限る | 6b |
 | 21 | JPEG で 10 分撮影を回す | 失敗率 < 2 %、音切れ・プレビューの fps 低下が無い。最大 JPEG サイズを記録 | 6c |
 | 22 | 符号化失敗の注入 (出力確保を失敗させるデバッグ定義) | フレームが破棄され、統計に出る。アプリは落ちない | 6c |
 | 23 | `-DPHOTOBOOTH_FRAME_RGB565=1` | RGB565 で従来どおり | 6c |

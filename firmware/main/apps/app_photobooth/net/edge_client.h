@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-// edge (PC) との通信の抽象インターフェース (docs/design/fw-app-step2.md §3)。
+// edge との通信の抽象インターフェース (docs/design/fw-app-step2.md §3)。
 // 独立ファーム版 device/src/edge/edge_client.h の最終形の移植。イベント名は docs/spec.md §8、
 // HTTP の契約は docs/protocol.md と一致させる。
 //
@@ -69,11 +69,7 @@ using JpegBytes = std::vector<uint8_t, PsramAllocator<uint8_t>>;
 // frame の X-Phase。
 enum class Phase : uint8_t { Compose, Capture };
 
-// 待機画面に出す接続状態。
-enum class LinkState : uint8_t {
-    Offline,  // 「PC未接続」(edge 無効ビルドもこれ)
-    Online,   // 「PC接続中」
-};
+// 待機画面に出す接続状態 LinkState は edge_types.h (ロジック層と共有)。
 
 // 診断画面 (DIAG) に出す接続状態。鍵は含めない。
 struct Diagnostics {
@@ -84,8 +80,7 @@ struct Diagnostics {
     char ssid[33]       = {};
     char ip[16]         = {};
     int rssi            = 0;  // dBm。wifi == Connected のときだけ有効
-    char edge_host[64]  = {};
-    uint16_t edge_port  = 0;
+    char edge_url[96]   = {};  // "scheme://host:port" (path と鍵は含めない)。書式が不正なら ""
     char last_error[96] = {};
 };
 
@@ -101,6 +96,11 @@ public:
     // 直近に hello か任意のリクエストで 2xx を受けていれば true。
     virtual bool isOnline()       = 0;
     virtual LinkState linkState() = 0;
+
+    // hello が後続の依頼 (timeout / candidate / save / photo) を妨げる段階か (Flow が毎周期知らせる)。
+    // 判定つきの撮影の開始から写真の準備完了 (QR を出す) までが true。その間は定期 hello を送らず、
+    // 接続状態は frame などの結果で決める。QR 表示中は false (hello で warm を保ち、停止にも気づく)。
+    virtual void setLatencySensitive(bool active) = 0;
 
     // 非同期 (コマンドキュー)。以前のセッションの結果・保留フレームは捨てる。
     virtual void sessionStart(const Session&) = 0;

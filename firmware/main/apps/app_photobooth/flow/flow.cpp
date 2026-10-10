@@ -276,6 +276,7 @@ void Flow::startSession(uint32_t now_ms, bool judged)
     candidate_.clear();
     session_.start(now_ms);
     judged_             = judged;
+    photo_ready_        = false;  // QR 画面からの撮り直し: 前のセッションの「公開済み」を持ち越さない
     closer_played_      = false;
     review_wait_        = ReviewWait::None;
     uploading_captured_ = false;
@@ -384,6 +385,10 @@ void Flow::drainCandidate()
 
 void Flow::update(const shared::hw::Event& ev, uint32_t now_ms)
 {
+    // 判定つきの撮影の開始から写真の準備完了までは、net タスクが定期 hello を止める (後ろに並ぶ
+    // timeout / candidate / save / photo を待たせない)。QR を出した後は hello を再開して warm を保ち、
+    // edge の停止にも気づけるようにする (「撮り直す」が古い online 判定で始まらないように)。
+    edge_.setLatencySensitive(session_.active && judged_ && !photo_ready_);
     head_.update(now_ms);
     if (exit_requested_) {
         return;
@@ -463,13 +468,16 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
         return;
     }
 
-    // 右下の接続表示 (「PC接続中」/「PC未接続」)。変わったときだけ差し替える。
+    // 右下の接続表示 (「接続中」/「準備中」/「接続なし」)。変わったときだけ差し替える。
     if (now_ms - idle_link_checked_ms_ >= kIdleLinkPollMs) {
         idle_link_checked_ms_     = now_ms;
         const view::IdleLink link = idleLink();
         if (link != idle_link_drawn_) {
             idle_link_drawn_ = link;
-            mclog::tagInfo(kTag, "idle: edge {}", link == view::IdleLink::Online ? "online" : "offline");
+            mclog::tagInfo(kTag, "idle: edge {}",
+                           link == view::IdleLink::Online     ? "online"
+                           : link == view::IdleLink::Starting ? "starting"
+                                                              : "offline");
             view_.updateIdleStatus(link);
         }
     }
@@ -477,7 +485,15 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
 
 view::IdleLink Flow::idleLink() const
 {
-    return edge_.linkState() == net::LinkState::Online ? view::IdleLink::Online : view::IdleLink::Offline;
+    switch (edge_.linkState()) {
+        case net::LinkState::Online:
+            return view::IdleLink::Online;
+        case net::LinkState::Starting:
+            return view::IdleLink::Starting;
+        case net::LinkState::Offline:
+            break;
+    }
+    return view::IdleLink::Offline;
 }
 
 void Flow::showIdle()
@@ -1116,9 +1132,9 @@ void Flow::buildDiag(char* out, size_t len)
         snprintf(line_wifi, sizeof(line_wifi), "%s: %s", str::kDiagWifiLabel, wifi);
         snprintf(line_ip, sizeof(line_ip), "IP: -");
     }
-    // 接続先 (host:port) は鍵ではないので画面には出す (PC の IP が DHCP で変わったことに気づけるように)。
-    snprintf(out, len, "%s\n%s\n%s: %s:%u\n%s: %s\n%s: %s", line_wifi, line_ip, str::kDiagPcLabel, d.edge_host,
-             static_cast<unsigned>(d.edge_port), str::kDiagReplyLabel, d.online ? str::kDiagReplyYes : str::kDiagReplyNo,
+    // 接続先 (scheme://host:port) は鍵ではないので画面には出す (PC の IP が DHCP で変わったことに気づけるように)。
+    snprintf(out, len, "%s\n%s\n%s: %s\n%s: %s\n%s: %s", line_wifi, line_ip, str::kDiagPcLabel,
+             d.edge_url[0] ? d.edge_url : "-", str::kDiagReplyLabel, d.online ? str::kDiagReplyYes : str::kDiagReplyNo,
              str::kDiagErrorLabel, d.last_error[0] ? d.last_error : str::kDiagNone);
 }
 

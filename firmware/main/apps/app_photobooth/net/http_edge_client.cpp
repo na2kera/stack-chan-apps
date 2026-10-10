@@ -23,13 +23,16 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 #if PHOTOBOOTH_EDGE_ENABLED
 
 #include <ArduinoJson.h>
+#include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
+#include <esp_tls_errors.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <hal/hal.h>
+#include <mbedtls/x509.h>
 #include <mooncake_log.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -39,6 +42,7 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <new>
 #include <utility>
@@ -46,6 +50,8 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 #include "../view/strings.h"
 #include "edge_config.h"
 #include "edge_parse.h"
+#include "edge_url.h"
+#include "link_logic.h"
 #include "network.h"
 
 namespace photobooth::net {
@@ -57,12 +63,14 @@ namespace local = config::local;
 constexpr const char* kTag = "PB-Edge";
 
 constexpr int kProtocolVersion = 1;
-// esp_http_client + ArduinoJson + fmt の分。高水位は logStats() で出す。
-constexpr uint32_t kTaskStack   = 8192;
+// esp_http_client + mbedTLS (https) + ArduinoJson + fmt の分。高水位は logStats() で出す。
+// 6b の初期値 (8192 → 12288)。実機の high-water で最小余裕 2 KiB 以上を保てる最小値に決め直す
+// (docs/design/step6-cloud-device.md §3.2「メモリ」)。
+constexpr uint32_t kTaskStack   = 12288;
 constexpr UBaseType_t kTaskPrio = 3;  // メインループ (1) より上、Wi-Fi / lwIP より下
 constexpr UBaseType_t kQueueDepth = 8;
 // この回数続けて失敗したら offline にしてフレームを送らず、hello で復帰を待つ。
-constexpr uint8_t kOfflineAfterFailures = 3;
+constexpr uint8_t kOfflineAfterFailures = link::kOfflineAfterFailures;
 // hello は HELLO_INTERVAL_MS ごとなので、1 回の hello の往復で offline に見えないよう窓は 2 倍にする。
 constexpr uint32_t kOnlineWindowMs      = config::HELLO_INTERVAL_MS * 2;
 constexpr uint32_t kPhotoPollIntervalMs = 500;
@@ -73,6 +81,7 @@ constexpr size_t kBinaryInitialBytes    = 16 * 1024;   // 長さ不明 (chunked)
 constexpr uint32_t kCandidateWaitMarginMs = 500;
 constexpr uint32_t kStatsIntervalMs     = 5000;
 constexpr uint32_t kIdleWaitMs          = 20;
+constexpr uint32_t kClockPollMs         = 100;  // 時刻の同期を待つ間の確認間隔
 constexpr int kHttpRxBuf                = 1024;
 constexpr int kHttpTxBuf                = 1024;  // 1 行目 (メソッド + パス) とヘッダ 1 本ずつが入る大きさ
 constexpr size_t kWriteChunk            = 8192;  // フレーム本文を書く単位 (合間に期限と終了要求を見る)
@@ -86,12 +95,24 @@ constexpr int kErrNoWifi       = -100;
 constexpr int kErrBodyTooLarge = -101;
 constexpr int kErrBadJson      = -102;
 constexpr int kErrMismatch     = -103;
-constexpr int kErrConnect      = -110;  // TCP 接続できない
+constexpr int kErrConnect      = -110;  // TCP 接続できない (http の分類できない失敗も)
 constexpr int kErrSend         = -111;  // ヘッダ・本文を送れない
 constexpr int kErrLost         = -112;  // 応答の途中で切れた
 constexpr int kErrTimeout      = -113;  // 応答が時間内に来ない
 constexpr int kErrInternal     = -114;  // クライアントを作れない (メモリ不足など)
 constexpr int kErrAborted      = -115;  // アプリを閉じる途中
+constexpr int kErrDns          = -116;  // 名前解決できない
+constexpr int kErrCert         = -117;  // 証明書を検証できない
+constexpr int kErrClock        = -118;  // 証明書の期限の検査で落ちた (こちらの時刻が不正)
+constexpr int kErrTls          = -119;  // その他の TLS の失敗
+
+// ロジック層 (link_logic.h) が持っている esp-tls / mbedTLS の値の写しが本物と一致すること。
+static_assert(link::kTlsErrCannotResolveHostname == ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME, "esp-tls code");
+static_assert(link::kTlsErrCannotCreateSocket == ESP_ERR_ESP_TLS_CANNOT_CREATE_SOCKET, "esp-tls code");
+static_assert(link::kTlsErrFailedConnectToHost == ESP_ERR_ESP_TLS_FAILED_CONNECT_TO_HOST, "esp-tls code");
+static_assert(link::kTlsErrConnectionTimeout == ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT, "esp-tls code");
+static_assert(link::kCertFlagExpired == MBEDTLS_X509_BADCERT_EXPIRED, "mbedtls flag");
+static_assert(link::kCertFlagFuture == MBEDTLS_X509_BADCERT_FUTURE, "mbedtls flag");
 
 static_assert(config::UPLOAD_RETRY >= 1, "UPLOAD_RETRY must be >= 1");
 
@@ -137,6 +158,14 @@ const char* statusText(int status)
             return str::kNetNoResponse;
         case kErrInternal:
             return str::kErrNoMemory;
+        case kErrDns:
+            return str::kNetDnsFailed;
+        case kErrCert:
+            return str::kNetCertError;
+        case kErrClock:
+            return str::kNetClockNotSynced;
+        case kErrTls:
+            return str::kNetTlsFailed;
         case 401:
             return str::kNetUnauthorized;
         default:
@@ -152,6 +181,27 @@ bool isSuccess(int status)
 bool wifiUp()
 {
     return Network::status() == Network::Status::Connected;
+}
+
+bool clockValidNow()
+{
+    return link::clockValid(static_cast<int64_t>(time(nullptr)));
+}
+
+// config_local.h の EDGE_BASE_URL を 1 回だけ分解して覚える (書式が不正なら status != Ok)。
+struct ParsedUrl {
+    EdgeUrl url;
+    UrlStatus status;
+};
+
+const ParsedUrl& edgeUrl()
+{
+    static const ParsedUrl parsed = [] {
+        ParsedUrl p{};
+        p.status = parseEdgeUrl(local::kEdgeBaseUrl, p.url);
+        return p;
+    }();
+    return parsed;
 }
 
 }  // namespace
@@ -184,8 +234,10 @@ struct EdgeWorker {
     };
     // 1 回の HTTP のやりとりの結果。status < 0 は通信失敗。
     struct Reply {
-        int status          = 0;
-        char error_code[40] = {};  // エラー応答の {"error": ...}
+        int status            = 0;
+        char error_code[40]   = {};     // エラー応答の {"error": ...}
+        bool connected        = false;  // esp_http_client_open() が成功した (接続と要求の送信まで済んだ)
+        bool response_timeout = false;  // 接続後、応答 (ヘッダ・本文) の待ちで期限切れ
     };
     struct Header {
         const char* name;
@@ -225,7 +277,10 @@ struct EdgeWorker {
     // retry_transport なら通信失敗 (status < 0) のとき接続を作り直して 1 回だけ送り直す
     // (keep-alive の接続が edge 側で閉じられていた場合の対策。冪等なリクエストだけ)。
     Reply request(const char* op, esp_http_client_method_t method, const char* path, const char* body,
-                  bool retry_transport);
+                  bool retry_transport, link::RequestKind kind = link::RequestKind::Other);
+    int classifyOpenError();
+    void waitForClock();
+    bool commandsWaiting() const;
     Reply exchange(const Request& rq);
     bool ensureHttp();
     bool armDeadline();
@@ -277,6 +332,11 @@ struct EdgeWorker {
     std::atomic<uint32_t> last_ok_ms{0};
     std::atomic<bool> ever_ok{false};
     std::atomic<uint8_t> failures{0};  // 連続失敗回数
+    std::atomic<bool> starting{false};  // 直近の hello が「準備中」(接続後の応答待ちで期限切れ、または 5xx)
+    std::atomic<bool> latency_sensitive{false};  // hello を止める段階 (Flow が setLatencySensitive で知らせる)
+
+    // ---- begin() で決めて以後は読むだけ ----
+    EdgeUrl url{};
 
     // ---- net タスクだけが触る ----
     esp_http_client_handle_t http = nullptr;
@@ -306,6 +366,16 @@ struct EdgeWorker {
     uint32_t stats_rtt_sum  = 0;
     uint32_t stats_rtt_max  = 0;
     uint32_t stats_edge_sum = 0;
+    // hello の統計 (同上)。rtt は再送を含めた 1 回の hello の時間
+    uint32_t stats_hello          = 0;
+    uint32_t stats_hello_ok       = 0;
+    uint32_t stats_hello_starting = 0;
+    uint32_t stats_hello_rtt_sum  = 0;
+    uint32_t stats_hello_rtt_max  = 0;
+    bool clock_checked            = false;  // https の最初の hello の前の時刻確認を済ませた
+    // 接続の統計 (同上)。https で毎回ハンドシェイクしていないかを実機で確かめる
+    uint32_t stats_conn_new    = 0;  // 新しく接続した (TCP + https なら TLS ハンドシェイク)
+    uint32_t stats_conn_reused = 0;  // keep-alive の接続を使い回した
 };
 
 namespace {
@@ -351,7 +421,15 @@ bool HttpEdgeClient::begin()
         copyStr(begin_error_, sizeof(begin_error_), str::kNetTaskBusy);
         return false;
     }
+    const ParsedUrl& pu = edgeUrl();
+    if (pu.status != UrlStatus::Ok) {
+        // URL 自体はログに出さない (userinfo などを含みうる)。理由の名前だけ出す。
+        mclog::tagError(kTag, "EDGE_BASE_URL is invalid ({}); edge disabled", urlStatusName(pu.status));
+        copyStr(begin_error_, sizeof(begin_error_), str::kNetBadUrl);
+        return false;
+    }
     auto w = std::make_shared<EdgeWorker>();
+    w->url = pu.url;
     if (!w->allocate()) {
         mclog::tagError(kTag, "alloc failed (free PSRAM {})", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         copyStr(begin_error_, sizeof(begin_error_), str::kErrNoMemory);
@@ -368,8 +446,9 @@ bool HttpEdgeClient::begin()
     worker_         = std::move(w);
     begin_error_[0] = '\0';
     cand_waiting_   = false;
-    // 接続先はログに出さない (URL を出さない方針)。ポートだけ出す。
-    mclog::tagInfo(kTag, "net task started (stack {}, port {})", kTaskStack, static_cast<unsigned>(local::kEdgePort));
+    // 接続先はログに出さない (URL を出さない方針)。scheme とポートだけ出す。
+    mclog::tagInfo(kTag, "net task started (stack {}, {} port {})", kTaskStack, pu.url.https ? "https" : "http",
+                   static_cast<unsigned>(pu.url.port));
     return true;
 }
 
@@ -402,7 +481,24 @@ bool HttpEdgeClient::isOnline()
 
 LinkState HttpEdgeClient::linkState()
 {
-    return isOnline() ? LinkState::Online : LinkState::Offline;
+    if (!worker_) {
+        return LinkState::Offline;
+    }
+    const auto& w = *worker_;
+    link::LinkSnapshot snap;
+    snap.ever_ok    = w.ever_ok.load();
+    snap.failures   = w.failures.load();
+    snap.last_ok_ms = w.last_ok_ms.load();  // now より先に読む (EdgeWorker::online() と同じ理由)
+    snap.starting   = w.starting.load();
+    snap.latency_sensitive = w.latency_sensitive.load();
+    return link::linkState(snap, wifiUp(), nowMs(), kOnlineWindowMs);
+}
+
+void HttpEdgeClient::setLatencySensitive(bool active)
+{
+    if (worker_) {
+        worker_->latency_sensitive.store(active);
+    }
 }
 
 void HttpEdgeClient::sessionStart(const Session& s)
@@ -659,8 +755,10 @@ void HttpEdgeClient::diagnostics(Diagnostics& out)
     }
     out.online = isOnline();
     Network::info(out.ssid, sizeof(out.ssid), out.ip, sizeof(out.ip), out.rssi);
-    copyStr(out.edge_host, sizeof(out.edge_host), local::kEdgeHost);
-    out.edge_port = local::kEdgePort;
+    const ParsedUrl& pu = edgeUrl();
+    if (pu.status == UrlStatus::Ok) {
+        formatEdgeUrl(pu.url, out.edge_url, sizeof(out.edge_url));  // path と鍵は含まない
+    }
     if (out.wifi == Diagnostics::Wifi::NotConfigured) {
         copyStr(out.last_error, sizeof(out.last_error), str::kNetWifiNotConfigured);
     } else if (out.wifi != Diagnostics::Wifi::Connected && worker_) {
@@ -718,12 +816,13 @@ EdgeWorker::~EdgeWorker()
 
 bool EdgeWorker::online() const
 {
-    if (!ever_ok.load() || failures.load() >= kOfflineAfterFailures) {
-        return false;
-    }
+    link::LinkSnapshot snap;
+    snap.ever_ok  = ever_ok.load();
+    snap.failures = failures.load();
+    snap.latency_sensitive = latency_sensitive.load();
     // last_ok を先に読んでから now を取る (逆だと net タスクの更新で差が負になりうる)。
-    const uint32_t last = last_ok_ms.load();
-    return nowMs() - last < kOnlineWindowMs;
+    snap.last_ok_ms = last_ok_ms.load();
+    return link::linkOnline(snap, nowMs(), kOnlineWindowMs);
 }
 
 bool EdgeWorker::enqueue(const Command& c)
@@ -818,9 +917,17 @@ void EdgeWorker::run()
             }
         }
 
-        // (4) 何も送っていない間の接続確認 (offline なら復帰の確認)。HELLO_INTERVAL_MS ごと
-        const uint32_t now = nowMs();
-        if (wifi_up && !quit.load() && (!requested_once || now - last_request_ms >= config::HELLO_INTERVAL_MS)) {
+        // (4) 何も送っていない間の接続確認 (offline なら復帰の確認)。HELLO_INTERVAL_MS ごと。
+        // 撮影〜写真の準備完了の間と依頼が残っているときは送らない (hello は最長 HELLO_TIMEOUT_MS 塞ぐため)。
+        link::HelloGate gate;
+        gate.wifi_up          = wifi_up;
+        gate.quitting         = quit.load();
+        gate.latency_sensitive   = latency_sensitive.load();
+        gate.commands_waiting = commandsWaiting();
+        gate.requested_once   = requested_once;
+        gate.since_last_ms    = nowMs() - last_request_ms;
+        gate.interval_ms      = config::HELLO_INTERVAL_MS;
+        if (link::shouldSendHello(gate)) {
             sendHello();
             worked = true;
         }
@@ -832,6 +939,11 @@ void EdgeWorker::run()
     }
     dropHttp();
     mclog::tagInfo(kTag, "net task exit (stack free {})", uxTaskGetStackHighWaterMark(nullptr));
+}
+
+bool EdgeWorker::commandsWaiting() const
+{
+    return uxQueueMessagesWaiting(queue) > 0;
 }
 
 bool EdgeWorker::currentGen(uint32_t gen)
@@ -1067,8 +1179,30 @@ void EdgeWorker::pollPhoto(uint32_t now)
     publishPhoto(poll_gen, info);
 }
 
+void EdgeWorker::waitForClock()
+{
+    // https の証明書の期限の検査にはシステム時刻が要る。純正は Wi-Fi 接続後に SNTP を始めるが
+    // 同期を待たないので、時刻が不正 (RTC が戻っていない) なら最大 kClockWaitMs だけ待つ。
+    // 待ち切れなければそのまま hello を試す (失敗すれば「時刻未同期」と出る)。
+    const uint32_t t0 = nowMs();
+    while (!clockValidNow() && !quit.load() && nowMs() - t0 < link::kClockWaitMs) {
+        xSemaphoreTake(wake, pdMS_TO_TICKS(kClockPollMs));  // 終了要求で起こされたら抜ける
+    }
+    mclog::tagInfo(kTag, "clock {} after waiting {} ms", clockValidNow() ? "synced" : "still invalid",
+                   nowMs() - t0);
+}
+
 void EdgeWorker::sendHello()
 {
+    if (!clock_checked) {
+        clock_checked = true;
+        if (link::shouldWaitForClock(url.https, clockValidNow())) {
+            waitForClock();
+            if (quit.load()) {
+                return;
+            }
+        }
+    }
     JsonDocument req;
     req["device_id"]        = local::kDeviceId;
     req["protocol_version"] = kProtocolVersion;
@@ -1076,7 +1210,34 @@ void EdgeWorker::sendHello()
     serializeJson(req, body, sizeof(body));
     const bool was_online = online();
     // hello は冪等なので、keep-alive の接続が切られていたら 1 回だけ新しい接続で送り直す。
-    const Reply r = request("hello", HTTP_METHOD_POST, "/v1/hello", body, true);
+    const uint32_t t0 = nowMs();
+    const Reply r     = request("hello", HTTP_METHOD_POST, "/v1/hello", body, true, link::RequestKind::Hello);
+    const uint32_t rtt = nowMs() - t0;
+
+    // 接続後のどの段階で失敗したか (Reply に保持した) から「準備中」かを決める。
+    link::ReplyFacts facts;
+    facts.http_status      = r.status > 0 ? r.status : 0;
+    facts.aborted          = r.status == kErrAborted;
+    facts.connected        = r.connected;
+    facts.response_timeout = r.response_timeout;
+    const link::ReplyClass cls = link::classifyReply(facts);
+    const bool was_starting    = starting.load();
+    const bool now_starting    = link::startingAfterHello(was_starting, cls);
+    starting.store(now_starting);
+    if (cls != link::ReplyClass::Aborted) {
+        ++stats_hello;
+        stats_hello_rtt_sum += rtt;
+        stats_hello_rtt_max = std::max(stats_hello_rtt_max, rtt);
+        if (cls == link::ReplyClass::Success) ++stats_hello_ok;
+        if (cls == link::ReplyClass::Starting) ++stats_hello_starting;
+    }
+    if (cls == link::ReplyClass::Starting && r.status < 0) {
+        setErrorOp("hello", str::kNetStartingWait);  // 5xx は noteResponse() の「HTTP 503 ...」のまま
+    }
+    if (now_starting != was_starting) {
+        mclog::tagInfo(kTag, "edge {} (hello status {}, {} ms)", now_starting ? "starting" : "not starting",
+                       r.status, rtt);
+    }
     if (r.status != 200 || was_online) {
         return;
     }
@@ -1199,7 +1360,7 @@ void EdgeWorker::fetchCandidate(const char* sid, uint32_t timeout_ms, bool allow
     Reply r;
     // SHUTTER の依頼は短い期限で 1 回だけ (後ろに並ぶ save を待たせない)。REVIEW は通信失敗のときだけ
     // 1 回送り直す (GET は冪等)。
-    request_timeout_ms   = timeout_ms != 0 ? timeout_ms : config::EDGE_TIMEOUT_MS;
+    request_timeout_ms   = link::requestTimeoutMs(link::RequestKind::Candidate, timeout_ms);
     const int attempts   = allow_retry ? 2 : 1;
     for (int attempt = 0; attempt < attempts; ++attempt) {
         r = exchange(rq);
@@ -1219,8 +1380,9 @@ void EdgeWorker::fetchCandidate(const char* sid, uint32_t timeout_ms, bool allow
 }
 
 EdgeWorker::Reply EdgeWorker::request(const char* op, esp_http_client_method_t method, const char* path,
-                                      const char* body, bool retry_transport)
+                                      const char* body, bool retry_transport, link::RequestKind kind)
 {
+    request_timeout_ms = link::requestTimeoutMs(kind);  // 1 試行の期限 (タイムアウト表)
     Request rq;
     rq.method = method;
     rq.path   = path;
@@ -1230,11 +1392,16 @@ EdgeWorker::Reply EdgeWorker::request(const char* op, esp_http_client_method_t m
         rq.body_len     = strlen(body);
     }
     Reply r = exchange(rq);
-    if (retry_transport && r.status < 0 && r.status != kErrNoWifi && r.status != kErrAborted) {
+    // 証明書・時刻の失敗は送り直しても変わらないので送り直さない (TLS では再接続 = 再ハンドシェイク)。
+    // hello は、1 回目の間に依頼が並んだら送り直さない (依頼を hello の 2 回目の後ろで待たせない)。
+    const bool retry_ok = kind != link::RequestKind::Hello || link::helloRetryAllowed(commandsWaiting());
+    if (retry_transport && retry_ok && r.status < 0 && r.status != kErrNoWifi && r.status != kErrAborted &&
+        r.status != kErrCert && r.status != kErrClock) {
         // keep-alive の接続が edge 側で閉じられていた場合など。新しい接続で 1 回だけ送り直す。
         mclog::tagWarn(kTag, "{}: {} ({}); retry once", op, statusText(r.status), r.status);
         r = exchange(rq);
     }
+    request_timeout_ms = config::EDGE_TIMEOUT_MS;  // 以後のリクエストは既定の期限
     last_request_ms = nowMs();
     requested_once  = true;
     noteResponse(op, r);
@@ -1247,10 +1414,16 @@ bool EdgeWorker::ensureHttp()
         return true;
     }
     esp_http_client_config_t cfg = {};
-    cfg.host                  = local::kEdgeHost;  // IP アドレス (名前解決はしない)
-    cfg.port                  = local::kEdgePort;
+    cfg.host                  = url.host;  // edge_url で確かめた host (https はホスト名のみ)
+    cfg.port                  = url.port;
     cfg.path                  = "/";
-    cfg.transport_type        = HTTP_TRANSPORT_OVER_TCP;
+    if (url.https) {
+        // 証明書は常に検証する (ESP-IDF の証明書バンドル。CN / SAN は host と照合。skip しない)。
+        cfg.transport_type    = HTTP_TRANSPORT_OVER_SSL;
+        cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    } else {
+        cfg.transport_type = HTTP_TRANSPORT_OVER_TCP;
+    }
     cfg.timeout_ms            = static_cast<int>(config::EDGE_TIMEOUT_MS);  // リクエストごとに armDeadline() が残り時間へ縮める
     cfg.disable_auto_redirect = true;
     cfg.buffer_size           = kHttpRxBuf;
@@ -1294,6 +1467,12 @@ void EdgeWorker::dropIfPeerClosed()
     if (http == nullptr || !http_open) {
         return;
     }
+    if (url.https) {
+        // https のソケットには暗号化された TLS レコード (TLS 1.3 のセッションチケットなど) が届いていることがあり、
+        // 生のソケットを覗くと「読み残し」と見誤って毎回繋ぎ直す (= 毎回ハンドシェイク)。覗かずに使い、
+        // 相手が閉じていたら次の open / write の失敗を request() の 1 回の再送で吸収する。
+        return;
+    }
     const int fd = esp_http_client_get_socket(http);
     if (fd < 0) {
         closeConnection();
@@ -1317,9 +1496,11 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
         rq.binary_out->clear();
     }
     // 途中で失敗したら、クライアントごと捨てる (読み残し・内部状態を次のリクエストに持ち越さない)。
-    auto fail = [this, &r](int status) {
+    bool in_body_send = false;  // 本文の送信中 (期限切れでも「応答待ち」ではない)
+    auto fail = [this, &r, &in_body_send](int status) {
         dropHttp();
         r.status = status;
+        r.response_timeout = r.connected && status == kErrTimeout && !in_body_send;
         return r;
     };
     if (quit.load() && !sending_cancel) {
@@ -1360,17 +1541,26 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     }
 
     // 接続 (まだなら) + リクエスト行とヘッダの送信。Content-Length は esp_http_client が付ける。
-    // ここから応答本文を読み終えるまでを 1 つの期限 (EDGE_TIMEOUT_MS) で縛る (protocol.md)。
+    // ここから応答本文を読み終えるまでを 1 つの期限 (request_timeout_ms。hello は HELLO_TIMEOUT_MS) で縛る。
     const bool was_open = http_open;
     request_started_ms  = nowMs();
     armDeadline();  // 接続は設定されたタイムアウトを 1 回だけ使う
+    // 前のやりとりの TLS / ソケットのエラーを消しておく (この open の失敗だけを分類する)。
+    esp_http_client_get_and_clear_last_tls_error(http, nullptr, nullptr);
+    esp_http_client_get_errno(http);
     const esp_err_t err = esp_http_client_open(http, static_cast<int>(rq.body_len));
     if (err != ESP_OK) {
-        r.status = err == ESP_ERR_HTTP_CONNECT ? kErrConnect : kErrSend;
+        r.status = err == ESP_ERR_HTTP_CONNECT ? classifyOpenError() : kErrSend;
         dropHttp();
         return r;
     }
-    http_open = true;
+    http_open   = true;
+    r.connected = true;
+    if (was_open) {
+        ++stats_conn_reused;
+    } else {
+        ++stats_conn_new;
+    }  // ここから先の期限切れは「接続後の応答待ち」(本文の送信中を除く)
     if (!was_open) {
         // 本文の最後の端数セグメントが Nagle で遅れないようにする。
         const int fd  = esp_http_client_get_socket(http);
@@ -1381,7 +1571,8 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     }
 
     // 本文。大きいフレームは区切って書き、合間に期限と終了要求を見る。
-    size_t sent = 0;
+    size_t sent  = 0;
+    in_body_send = true;
     while (sent < rq.body_len) {
         if (quit.load() && !sending_cancel) {
             return fail(kErrAborted);
@@ -1397,6 +1588,7 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
         }
         sent += static_cast<size_t>(n);
     }
+    in_body_send = false;
 
     if (!armDeadline()) {
         return fail(kErrTimeout);
@@ -1439,6 +1631,36 @@ EdgeWorker::Reply EdgeWorker::exchange(const Request& rq)
     }
     r.status = status;
     return r;
+}
+
+int EdgeWorker::classifyOpenError()
+{
+    // esp_http_client_open() の接続の失敗を、esp-tls が残したエラーで分ける (link::classifyConnectFailure)。
+    link::ConnectError e;
+    e.https          = url.https;
+    int tls_code     = 0;
+    int cert_flags   = 0;
+    e.tls_last_error = static_cast<int>(esp_http_client_get_and_clear_last_tls_error(http, &tls_code, &cert_flags));
+    e.sock_errno     = esp_http_client_get_errno(http);
+    e.cert_flags     = cert_flags;
+    e.clock_valid    = clockValidNow();
+    const link::ConnectFailure f = link::classifyConnectFailure(e);
+    mclog::tagWarn(kTag, "connect failed: kind {} (esp-tls 0x{:x}, tls code 0x{:x}, cert flags 0x{:x}, errno {})",
+                   static_cast<unsigned>(f), static_cast<unsigned>(e.tls_last_error), static_cast<unsigned>(tls_code),
+                   static_cast<unsigned>(cert_flags), e.sock_errno);
+    switch (f) {
+        case link::ConnectFailure::Dns:
+            return kErrDns;
+        case link::ConnectFailure::Cert:
+            return kErrCert;
+        case link::ConnectFailure::ClockNotSynced:
+            return kErrClock;
+        case link::ConnectFailure::Tls:
+            return kErrTls;
+        case link::ConnectFailure::Tcp:
+            break;
+    }
+    return kErrConnect;
 }
 
 bool EdgeWorker::armDeadline()
@@ -1574,6 +1796,7 @@ void EdgeWorker::noteSuccess()
 {
     last_ok_ms.store(nowMs());
     ever_ok.store(true);
+    starting.store(false);
     if (failures.exchange(0) >= kOfflineAfterFailures) {
         mclog::tagInfo(kTag, "edge reachable again");
     }
@@ -1619,7 +1842,24 @@ void EdgeWorker::logStats(uint32_t now)
                        stats_frames, dt, fps, rtt_avg, stats_rtt_max, edge_avg, stats_failures, stats_skipped,
                        uxTaskGetStackHighWaterMark(nullptr));
     }
+    if (stats_hello > 0) {
+        mclog::tagInfo(kTag, "hello {} (ok {}, starting {}) rtt avg {} max {} ms, link {}, stack free {}", stats_hello,
+                       stats_hello_ok, stats_hello_starting, stats_hello_rtt_sum / stats_hello, stats_hello_rtt_max,
+                       online() ? "online" : (starting.load() ? "starting" : "offline"),
+                       uxTaskGetStackHighWaterMark(nullptr));
+    }
+    if (stats_conn_new > 0 || stats_conn_reused > 0) {
+        mclog::tagInfo(kTag, "connections: new {} reused {} ({})", stats_conn_new, stats_conn_reused,
+                       url.https ? "https" : "http");
+    }
+    stats_conn_new    = 0;
+    stats_conn_reused = 0;
     stats_since_ms = now;
+    stats_hello          = 0;
+    stats_hello_ok       = 0;
+    stats_hello_starting = 0;
+    stats_hello_rtt_sum  = 0;
+    stats_hello_rtt_max  = 0;
     stats_frames   = 0;
     stats_failures = 0;
     stats_skipped  = 0;
