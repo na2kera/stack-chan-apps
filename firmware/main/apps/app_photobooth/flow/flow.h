@@ -20,10 +20,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "../hw/audio.h"
+#include "../../shared/hw/audio.h"
+#include "../../shared/hw/input.h"
 #include "../hw/camera.h"
+#include "../hw/clips.h"
 #include "../hw/head.h"
-#include "../hw/input.h"
 #include "../net/edge_client.h"
 #include "../view/view.h"
 #include "session.h"
@@ -33,15 +34,16 @@ namespace photobooth {
 
 class Flow {
 public:
-    Flow(hw::Camera& camera, hw::Head& head, hw::Audio& audio, view::View& view, net::EdgeClient& edge)
-        : camera_(camera), head_(head), audio_(audio), view_(view), edge_(edge)
+    Flow(hw::Camera& camera, hw::Head& head, shared::hw::Audio& audio, const hw::Clips& clips, view::View& view,
+         net::EdgeClient& edge)
+        : camera_(camera), head_(head), audio_(audio), clips_(clips), view_(view), edge_(edge)
     {
     }
 
     // view_ok=false (表示用バッファを確保できない) なら ERROR「メモリ不足」、
     // camera_ok=false なら ERROR (カメラ初期化失敗) から始める。
     void begin(uint32_t now_ms, bool camera_ok, bool view_ok);
-    void update(const hw::Event& ev, uint32_t now_ms);
+    void update(const shared::hw::Event& ev, uint32_t now_ms);
     // アプリを閉じる前の後始末 (取り込み停止・再生停止・候補の解放・未公開セッションの cancel)。
     void end(uint32_t now_ms);
 
@@ -103,19 +105,19 @@ private:
     // SHUTTER で受け取りきれなかった候補 JPEG を、届く (または EdgeClient が諦める) まで捨て続ける。
     void drainCandidate();
 
-    void updateIdle(const hw::Event& ev, uint32_t now_ms);
+    void updateIdle(const shared::hw::Event& ev, uint32_t now_ms);
     void updateAnnounce(uint32_t now_ms);
     void updateCompose(uint32_t now_ms);
     void updateCapture(uint32_t now_ms);
     void updateShutter(uint32_t now_ms);
     void pollShutterCandidate(uint32_t now_ms);
     void showShutterCaptured(uint32_t now_ms);
-    void updateReview(const hw::Event& ev, uint32_t now_ms);
+    void updateReview(const shared::hw::Event& ev, uint32_t now_ms);
     void updateUploading(uint32_t now_ms);
-    void updatePhotoQr(const hw::Event& ev, uint32_t now_ms);
-    void updateXQr(const hw::Event& ev, uint32_t now_ms);
-    void updateError(const hw::Event& ev, uint32_t now_ms);
-    void updateDiag(const hw::Event& ev, uint32_t now_ms);
+    void updatePhotoQr(const shared::hw::Event& ev, uint32_t now_ms);
+    void updateXQr(const shared::hw::Event& ev, uint32_t now_ms);
+    void updateError(const shared::hw::Event& ev, uint32_t now_ms);
+    void updateDiag(const shared::hw::Event& ev, uint32_t now_ms);
 
     // プレビュー 1 フレーム分。CAPTURE なら条件を満たすフレームを候補として保持する。
     // 判定つきなら、首が止まっている (HEAD_SETTLE_MS を過ぎた) フレームだけ edge に渡す。
@@ -136,11 +138,12 @@ private:
     void showIdle();
     const char* idleWarning() const;
     // 今の画面のボタンが押されたなら index、そうでなければ -1。
-    int buttonHit(const hw::Event& ev) const;
+    int buttonHit(const shared::hw::Event& ev) const;
 
     hw::Camera& camera_;
     hw::Head& head_;
-    hw::Audio& audio_;
+    shared::hw::Audio& audio_;
+    const hw::Clips& clips_;
     view::View& view_;
     net::EdgeClient& edge_;
 

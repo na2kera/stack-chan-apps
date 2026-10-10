@@ -18,13 +18,11 @@
 #include <mutex>
 #include <vector>
 
-#include "../assets/pb_assets.h"
-
-namespace photobooth::hw {
+namespace shared::hw {
 
 namespace {
 
-constexpr const char* kTag = "PB-Audio";
+constexpr const char* kTag = "Audio";
 constexpr int kSampleRate        = AUDIO_OUTPUT_SAMPLE_RATE;  // CoreS3AudioCodec の出力 (24 kHz)
 constexpr size_t kChunkSamples   = kSampleRate / 50;          // 20 ms
 constexpr int kTailSilenceChunks = 2;  // 鳴らし終わりに 40 ms の無音を流して DMA の残りを押し出す
@@ -129,11 +127,6 @@ Audio::Pcm Audio::parseWav(const uint8_t* start, const uint8_t* end, const char*
 
 bool Audio::begin()
 {
-    clips_[static_cast<int>(Clip::Announce)] = parseWav(pb_voice_announce_start, pb_voice_announce_end, "announce");
-    clips_[static_cast<int>(Clip::Captured)] = parseWav(pb_voice_captured_start, pb_voice_captured_end, "captured");
-    clips_[static_cast<int>(Clip::Closer)]   = parseWav(pb_voice_closer_start, pb_voice_closer_end, "closer");
-    clips_[static_cast<int>(Clip::Shutter)]  = parseWav(pb_voice_shutter_start, pb_voice_shutter_end, "shutter");
-
     {
         auto old = g_detached.lock();
         if (old != nullptr && old->running.load()) {
@@ -155,7 +148,7 @@ bool Audio::begin()
     worker_->running = true;
     auto* holder     = new std::shared_ptr<AudioWorker>(worker_);
     TaskHandle_t handle = nullptr;
-    if (xTaskCreate(taskEntry, "pb_audio", kTaskStack, holder, kTaskPrio, &handle) != pdPASS) {
+    if (xTaskCreate(taskEntry, "app_audio", kTaskStack, holder, kTaskPrio, &handle) != pdPASS) {
         mclog::tagError(kTag, "failed to create audio task");
         delete holder;
         worker_.reset();
@@ -203,9 +196,8 @@ bool Audio::isPlaying() const
     return worker_ != nullptr && worker_->playing.load();
 }
 
-bool Audio::play(Clip clip)
+bool Audio::play(const Pcm& pcm)
 {
-    const Pcm& pcm = clips_[static_cast<int>(clip)];
     if (!worker_ || pcm.data == nullptr || pcm.samples == 0) {
         mclog::tagWarn(kTag, "play {}: unavailable", pcm.name);
         return false;
@@ -290,4 +282,4 @@ void AudioWorker::run()
     playing = false;
 }
 
-}  // namespace photobooth::hw
+}  // namespace shared::hw

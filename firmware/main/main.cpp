@@ -39,8 +39,9 @@ extern "C" void app_main(void)
         GetMooncake().installApp(std::make_unique<AppEzdata>());
         GetMooncake().installApp(std::make_unique<AppDance>());
         GetMooncake().installApp(std::make_unique<AppSetup>());
-        // 最後に足す (各アプリの requestWarmReboot(index) が install 順の番号に依存しているため)
+        // 自作アプリは最後に足す (各アプリの requestWarmReboot(index) が install 順の番号に依存しているため)
         GetMooncake().installApp(std::make_unique<AppPhotobooth>());
+        GetMooncake().installApp(std::make_unique<AppRoulette>());
 
         // Main loop
         while (1) {

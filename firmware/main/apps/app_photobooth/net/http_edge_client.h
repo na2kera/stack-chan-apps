@@ -14,7 +14,7 @@
 //   - mailbox: frame_result / timeout / photo / candidate の最新 1 件 + fresh フラグ (mutex)。
 // セッションの世代 (generation) を sessionStart / sessionCancel で進め、古い世代の結果は捨てる。
 //
-// タスクの寿命は hw/camera・hw/audio と同じ worker + shared_ptr 方式: end() はタスクを 1 秒待ち、
+// タスクの寿命は hw/camera・shared/hw/audio と同じ worker + shared_ptr 方式: end() はタスクを 1 秒待ち、
 // 止まらなければ共有状態 (EdgeWorker) ごと切り離す。後始末はタスクが終わるときに自分でする。
 // 切り離したタスクが生きている間は begin() を断る (診断画面の「再接続」でやり直せる)。
 //

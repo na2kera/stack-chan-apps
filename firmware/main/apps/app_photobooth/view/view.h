@@ -7,7 +7,7 @@
 //
 // show*() は状態に入ったときに 1 回だけ呼んで画面を作り直す。変化する部分 (プレビュー、残り秒数) は
 // update*() で差し替える。どのメソッドも中で LvglLockGuard を取るので、呼び出し側は取らないこと。
-// 画面のボタン・タップは hw::Input に (画面の世代番号付きで) 積む。
+// 画面のボタン・タップは shared::hw::Input に (画面の世代番号付きで) 積む。
 #pragma once
 
 #include <lvgl.h>
@@ -18,7 +18,7 @@
 
 class LvglAllocatedImage;  // 純正の JPEG デコード結果 (display/lvgl_display/lvgl_image.h)
 
-namespace photobooth::hw {
+namespace shared::hw {
 class Input;
 }
 
@@ -41,7 +41,7 @@ enum class IdleLink : uint8_t {
 
 class View {
 public:
-    explicit View(hw::Input& input);
+    explicit View(shared::hw::Input& input);
     ~View();
 
     // プレビュー用の RGB565 バッファ (PSRAM) を確保する。
@@ -119,7 +119,7 @@ private:
     // ヘッダを確かめて (320x240 のベースラインだけ) RGB565 にデコードする。LVGL のロックの外で呼ぶ。
     static std::shared_ptr<LvglAllocatedImage> decodeCandidateJpeg(const uint8_t* jpeg, size_t len);
 
-    hw::Input& input_;
+    shared::hw::Input& input_;
     std::unique_ptr<Page> page_;
     uint32_t screen_id_ = 0;
 

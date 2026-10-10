@@ -265,6 +265,8 @@ file(GLOB COMMON_SOUNDS
 
 # app_photobooth のセリフ (24 kHz / mono / 16-bit WAV)。シンボルは _binary_<名前>_wav_start/_end
 file(GLOB PHOTOBOOTH_VOICES apps/app_photobooth/assets/voice/*.wav)
+# app_roulette の発話 (同じ形式)。シンボルが photobooth と重ならないよう、ファイル名に rl_ を付ける
+file(GLOB ROULETTE_VOICES apps/app_roulette/assets/voice/*.wav)
 
 # If target chip is ESP32, exclude specific files to avoid build errors
 if(CONFIG_IDF_TARGET_ESP32)
@@ -293,7 +295,7 @@ if(CONFIG_IDF_TARGET_ESP32S3)
 endif()
 
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PHOTOBOOTH_VOICES}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PHOTOBOOTH_VOICES} ${ROULETTE_VOICES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES

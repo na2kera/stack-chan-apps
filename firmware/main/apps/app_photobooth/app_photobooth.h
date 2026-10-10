@@ -9,13 +9,17 @@
 
 #include <memory>
 
+namespace shared::hw {
+class Audio;
+class Input;
+}  // namespace shared::hw
+
 namespace photobooth {
 class Flow;
 namespace hw {
-class Audio;
 class Camera;
+class Clips;
 class Head;
-class Input;
 }  // namespace hw
 namespace net {
 class EdgeClient;
@@ -37,8 +41,9 @@ public:
 
 private:
     // onOpen で作り、onClose で壊す (アプリを開いていない間は PSRAM もタスクも使わない)。
-    std::unique_ptr<photobooth::hw::Input> _input;
-    std::unique_ptr<photobooth::hw::Audio> _audio;
+    std::unique_ptr<shared::hw::Input> _input;
+    std::unique_ptr<shared::hw::Audio> _audio;
+    std::unique_ptr<photobooth::hw::Clips> _clips;
     std::unique_ptr<photobooth::hw::Head> _head;
     std::unique_ptr<photobooth::hw::Camera> _camera;
     std::unique_ptr<photobooth::view::View> _view;

@@ -10,11 +10,12 @@
 
 #include "assets/pb_assets.h"
 #include "config.h"
+#include "../shared/hw/audio.h"
+#include "../shared/hw/input.h"
 #include "flow/flow.h"
-#include "hw/audio.h"
 #include "hw/camera.h"
+#include "hw/clips.h"
 #include "hw/head.h"
-#include "hw/input.h"
 #include "net/http_edge_client.h"
 #include "net/network.h"
 #include "view/view.h"
@@ -42,13 +43,14 @@ void AppPhotobooth::onOpen()
 {
     mclog::tagInfo(getAppInfo().name, "on open");
 
-    _input  = std::make_unique<photobooth::hw::Input>();
-    _audio  = std::make_unique<photobooth::hw::Audio>();
+    _input  = std::make_unique<shared::hw::Input>();
+    _audio  = std::make_unique<shared::hw::Audio>();
+    _clips  = std::make_unique<photobooth::hw::Clips>();
     _head   = std::make_unique<photobooth::hw::Head>();
     _camera = std::make_unique<photobooth::hw::Camera>();
     _view   = std::make_unique<photobooth::view::View>(*_input);
     _edge   = photobooth::net::createEdgeClient();
-    _flow   = std::make_unique<photobooth::Flow>(*_camera, *_head, *_audio, *_view, *_edge);
+    _flow   = std::make_unique<photobooth::Flow>(*_camera, *_head, *_audio, *_clips, *_view, *_edge);
 
     // edge と繋ぐビルドなら、先に Wi-Fi を繋ぐ。純正の App Center と同じく startNetwork() を同期で呼び、
     // 繋がるまで「Wi-Fi接続中」の画面を出す (進み具合の文言は純正の onLog をそのまま出す)。
@@ -74,6 +76,7 @@ void AppPhotobooth::onOpen()
 
     // 初期化順は独立ファーム版 (device/src/main.cpp) と同じ: 入力 → 音声 → 首 → カメラ → 通信 → 状態機械。
     _input->begin();
+    _clips->begin();  // WAV を調べるだけ (以前は Audio::begin() の先頭でしていた)
     if (!_audio->begin()) {
         mclog::tagWarn(getAppInfo().name, "audio unavailable; continue without voice");
     }
@@ -119,6 +122,7 @@ void AppPhotobooth::onClose()
     _view.reset();
     _camera.reset();
     _head.reset();
+    _clips.reset();
     _audio.reset();
     _input.reset();
 }
