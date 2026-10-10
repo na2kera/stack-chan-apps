@@ -20,8 +20,7 @@ enum class State : uint8_t {
     Shutter,  // 自動採用の直後: 白フラッシュ → 撮れた写真を止めて表示 (fw-app-step2.md「シャッター演出」)
     Review,
     Uploading,
-    PhotoQr,
-    XQr,
+    Qr,  // 写真 QR と X 投稿 QR を左右に並べる (docs/design/ui-review-two-qr.md)
     Error,
     Diag,  // 接続診断 (edge に繋がらないときに待機画面のタッチで開く。fw-app-step2.md §4)
 };
@@ -44,10 +43,8 @@ inline const char* stateName(State s)
             return "REVIEW";
         case State::Uploading:
             return "UPLOADING";
-        case State::PhotoQr:
-            return "PHOTO_QR";
-        case State::XQr:
-            return "X_QR";
+        case State::Qr:
+            return "QR";
         case State::Error:
             return "ERROR";
         case State::Diag:
@@ -74,10 +71,8 @@ inline const char* stateTitle(State s)
             return str::kTitleReview;
         case State::Uploading:
             return str::kTitleUploading;
-        case State::PhotoQr:
+        case State::Qr:
             return str::kTitlePhotoQr;
-        case State::XQr:
-            return str::kTitleXQr;
         case State::Error:
             return str::kTitleError;
         case State::Diag:

@@ -54,13 +54,11 @@ constexpr uint32_t kFrameStallMs = 2000;
 
 // ボタンの並び (view と同じ順番)
 constexpr int kBtnIdleExit     = 0;  // 待機: 終了
-constexpr int kBtnReviewSave   = 0;  // REVIEW: 保存する / 撮り直す
-constexpr int kBtnReviewRetake = 1;
+constexpr int kBtnReviewRetake = 0;  // REVIEW: 撮り直す / 次へ (次へ = 保存してアップロードへ)
+constexpr int kBtnReviewNext   = 1;
 constexpr int kBtnReviewOnlyRetake = 0;  // 候補なし: 撮り直す
-constexpr int kBtnPhotoNext    = 0;  // PHOTO_QR: 次へ / 撮り直す
-constexpr int kBtnPhotoRetake  = 1;
-constexpr int kBtnXBack        = 0;  // X_QR: 戻る / 終了
-constexpr int kBtnXExit        = 1;
+constexpr int kBtnQrRetake     = 0;  // QR: 撮り直す / 終了
+constexpr int kBtnQrExit       = 1;
 constexpr int kBtnErrorRetry   = 0;  // ERROR: 再試行 / 終了
 constexpr int kBtnErrorExit    = 1;
 constexpr int kBtnErrorOnlyExit = 0;  // ERROR (再試行なし): 終了
@@ -245,16 +243,9 @@ void Flow::enter(State next, uint32_t now_ms)
             uploading_quiet_ = false;
             break;
 
-        case State::PhotoQr:
-            if (!view_.showPhotoQr(stateTitle(next), photo_url_, expires_at_)) {
-                failQr(now_ms, "photo");
-                return;
-            }
-            break;
-
-        case State::XQr:
-            if (!view_.showXQr(stateTitle(next), share_url_)) {
-                failQr(now_ms, "share");
+        case State::Qr:
+            if (!view_.showQr(stateTitle(next), photo_url_, share_url_, expires_at_)) {
+                failQr(now_ms, "photo/share");
                 return;
             }
             break;
@@ -417,11 +408,8 @@ void Flow::update(const shared::hw::Event& ev, uint32_t now_ms)
         case State::Uploading:
             updateUploading(now_ms);
             break;
-        case State::PhotoQr:
-            updatePhotoQr(ev, now_ms);
-            break;
-        case State::XQr:
-            updateXQr(ev, now_ms);
+        case State::Qr:
+            updateQr(ev, now_ms);
             break;
         case State::Error:
             updateError(ev, now_ms);
@@ -833,7 +821,7 @@ bool Flow::previewFrame(bool capture, uint32_t now_ms)
     const bool still = !head_.isMoving() &&
                        static_cast<int32_t>(frame.captured_ms - (head_.lastMotionMs() + config::HEAD_SETTLE_MS)) > 0;
     // device 側で候補を持つのは判定なしの撮影だけ。判定つきでは edge が保持するフレームだけが
-    // 保存対象なので、device の別フレームを「保存する」付きで見せない (画面と保存される写真をずらさない)。
+    // 保存対象なので、device の別フレームを「次へ」(保存) 付きで見せない (画面と保存される写真をずらさない)。
     if (capture && still && !judged_) {
         candidate_.assign(frame, frame_id);
     }
@@ -939,8 +927,8 @@ void Flow::updateReview(const shared::hw::Event& ev, uint32_t now_ms)
         return;
     }
     if (review_has_candidate_) {
-        if (hit == kBtnReviewSave) {
-            mclog::tagInfo(kTag, "review: save");
+        if (hit == kBtnReviewNext) {
+            mclog::tagInfo(kTag, "review: next (save)");
             if (judged_) {
                 edge_.reviewDecision(session_, true);
             }
@@ -1004,33 +992,23 @@ void Flow::updateUploading(uint32_t now_ms)
     // 「撮れたよ」を言い切ってから QR に進む。
     const bool sound_done = !audio_.isPlaying() || now_ms - state_since_ms_ > kUploadingSoundGuardMs;
     if (photo_ready_ && sound_done) {
-        enter(State::PhotoQr, now_ms);
+        enter(State::Qr, now_ms);
     }
 }
 
-// ---- PHOTO_QR / X_QR -----------------------------------------------------
+// ---- QR ------------------------------------------------------------------
 
-void Flow::updatePhotoQr(const shared::hw::Event& ev, uint32_t now_ms)
+void Flow::updateQr(const shared::hw::Event& ev, uint32_t now_ms)
 {
     const int hit = buttonHit(ev);
-    if (hit == kBtnPhotoNext) {
-        enter(State::XQr, now_ms);
-    } else if (hit == kBtnPhotoRetake) {
-        mclog::tagInfo(kTag, "photo qr: retake");
+    if (hit == kBtnQrRetake) {
+        mclog::tagInfo(kTag, "qr: retake");
         retake(now_ms);
-    }
-}
-
-void Flow::updateXQr(const shared::hw::Event& ev, uint32_t now_ms)
-{
-    const int hit = buttonHit(ev);
-    if (hit == kBtnXBack) {
-        enter(State::PhotoQr, now_ms);
-    } else if (hit == kBtnXExit) {
+    } else if (hit == kBtnQrExit) {
         mclog::tagInfo(kTag, "session end id={}", session_.id);
         candidate_.clear();
         session_.end();  // 公開済みなので cancel は送らない
-        requestExit("x_qr exit button");
+        requestExit("qr exit button");
     }
 }
 

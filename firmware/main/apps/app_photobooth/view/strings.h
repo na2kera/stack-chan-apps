@@ -21,8 +21,8 @@ inline constexpr const char* kTitleCapture   = "撮影中";
 inline constexpr const char* kTitleShutter   = "撮れたよ";  // SHUTTER: 撮れた写真に重ねるタイトル帯
 inline constexpr const char* kTitleReview    = "確認";
 inline constexpr const char* kTitleUploading = "準備中";
-inline constexpr const char* kTitlePhotoQr   = "写真を保存";
-inline constexpr const char* kTitleXQr       = "Xに投稿";
+inline constexpr const char* kTitlePhotoQr   = "写真を保存";  // QR 画面のタイトルと左 QR の見出し
+inline constexpr const char* kTitleXQr       = "Xに投稿";     // QR 画面の右 QR の見出し
 inline constexpr const char* kTitleError     = "エラー";
 inline constexpr const char* kTitleDiag      = "接続診断";
 
@@ -49,14 +49,11 @@ inline constexpr const char* kCaptured       = "撮れたよ";
 inline constexpr const char* kUploading      = "写真を準備中";
 inline constexpr const char* kExpiresLabel   = "削除予定";
 inline constexpr const char* kExpiresUnknown = "--:--";
-inline constexpr const char* kXQrGuide       = "保存した写真をXに添付してね";
 inline constexpr const char* kCameraDisabled = "カメラ無効";
 
 // ---- ボタン ----
-inline constexpr const char* kBtnSave  = "保存する";
 inline constexpr const char* kBtnRetake = "撮り直す";
 inline constexpr const char* kBtnNext  = "次へ";
-inline constexpr const char* kBtnBack  = "戻る";
 inline constexpr const char* kBtnExit  = "終了";
 inline constexpr const char* kBtnRetry = "再試行";
 inline constexpr const char* kBtnReconnect = "再接続";

@@ -8,7 +8,7 @@
 ゴール（独立ファーム版ステップ1 と同じフローを純正ファーム内で）:
 
 - ランチャーのアプリ一覧に「Photobooth」が並び、開くと待機画面（「写真を撮りたい、と言ってね」「タッチで開始」）になる。
-- 画面タッチまたは頭部タッチで ANNOUNCE → COMPOSE → CAPTURE → REVIEW → PHOTO_QR → X_QR と一周し、「終了」でアプリを閉じてランチャーの顔に戻る。
+- 画面タッチまたは頭部タッチで ANNOUNCE → COMPOSE → CAPTURE → REVIEW → UPLOADING → QR（写真 QR と X 投稿 QR を 1 画面に並べる）と一周し、「終了」でアプリを閉じてランチャーの顔に戻る（変更: 旧 PHOTO_QR → X_QR の 2 画面を統合。`ui-review-two-qr.md`）。
 - カメラプレビュー、首振り（小さな探索）、セリフ再生、固定 URL の QR が動く。
 - 純正の自動 OTA でこのビルドが上書きされないようにする。
 - 純正機能（AI エージェント、アバター、ダンス、設定、App Center）が壊れていない。
@@ -56,7 +56,7 @@ stack-chan-apps/
 app_photobooth/
 ├── app_photobooth.h/.cpp   # AppAbility。onOpen で初期化、onRunning で状態機械を回す、onClose で後始末
 ├── flow/
-│   ├── state.h             # enum State (IDLE, ANNOUNCE, COMPOSE, CAPTURE, REVIEW, UPLOADING, PHOTO_QR, X_QR, ERROR)
+│   ├── state.h             # enum State (IDLE, ANNOUNCE, COMPOSE, CAPTURE, SHUTTER, REVIEW, UPLOADING, QR, ERROR, DIAG)
 │   ├── flow.h/.cpp         # 状態機械。docs/design/step1-device.md §4 と同じ遷移。HW は下の hw/ 経由
 │   └── session.h           # UUID v4 / frame_id / 単調時計 (device/src/app/session.h を移植)
 ├── hw/
@@ -86,7 +86,7 @@ app_photobooth/
 
 | 項目 | 独立ファーム版 | 純正ファーム内アプリ版 |
 | --- | --- | --- |
-| IDLE | 自前の顔を描く | ランチャーの顔が IDLE 相当。アプリを開いた直後の画面は「待機」（文言は spec §4 の IDLE と同じ。ボタン帯に「終了」）。待機の「終了」と X_QR の「終了」で `close()` してランチャーへ（X_QR の「終了」は IDLE に戻らない） |
+| IDLE | 自前の顔を描く | ランチャーの顔が IDLE 相当。アプリを開いた直後の画面は「待機」（文言は spec §4 の IDLE と同じ。ボタン帯に「終了」）。待機の「終了」と QR 画面の「終了」で `close()` してランチャーへ（QR 画面の「終了」は IDLE に戻らない） |
 | 画面描画 | M5GFX 直描き | LVGL。プレビューは `lv_image` に RGB565 バッファを張り替える（または `lv_canvas`）。カウントなどは上に重ねたラベルを更新 |
 | 日本語フォント | lgfxJapanGothic | 確認結果: 純正が組み込む `font_puhui_basic_20_4` には一部のかな・漢字（あ と ね 撮 写 など 40 字）が無い。同じ PuHuiTi 系の `puhui-common.ttf`（xiaozhi-fonts 同梱）から `view/strings.h` の文字 + ASCII だけを `lv_font_conv` で切り出した `pb_font_jp_20`（20px / 4bpp）と、残り秒数用の `pb_font_num_48` を `assets/` に置く。漢字の字形は中国語系 |
 | 音声 | M5.Speaker.playWav | コーデックの PCM 出力（24 kHz / mono）。WAV はビルド時に埋め込み、再生タスクで 20ms ずつ `OutputData`。音量は純正の設定値（SETUP）に従う |
@@ -112,7 +112,7 @@ app_photobooth/
 - [ ] 画面タッチ・頭部タッチで開始し、セリフが鳴り終わってから COMPOSE。
 - [ ] COMPOSE で首が左右に小さく動いて正面に戻る。可動域は config の範囲内。
 - [ ] CAPTURE のプレビューが動き、残り秒数が減り、10 秒で REVIEW。
-- [ ] REVIEW の保存／撮り直し、PHOTO_QR / X_QR の QR がスマホで読める。
+- [ ] REVIEW の「撮り直す」／「次へ」（保存）、QR 画面の 2 つの QR（左: 写真、右: X 投稿）がスマホで読める。
 - [ ] アプリを閉じたあと、純正のアバター・ダンス・AI エージェントが正常（カメラ・音声・サーボの後始末ができている）。
 - [ ] 自動 OTA が走らない（AI エージェント起動時に更新チェックが出ない）。
 - [ ] 日本語の文言が欠けずに表示される。

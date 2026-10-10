@@ -77,11 +77,11 @@ public:
     void updateCaptureOverlay(int remaining_sec, int face_count, int target);
     // COMPOSE / CAPTURE のプレビューを差し替える (RGB565 LE)。
     void updatePreview(const uint16_t* pixels, int width, int height);
-    // REVIEW: 候補フレーム + 「保存する」「撮り直す」。pixels が nullptr、または表示用バッファが無くて
-    // 出せなかったときは「撮り直す」だけ。候補を出せたら true (ボタン 0 =「保存する」)、
+    // REVIEW: 候補フレーム + 「撮り直す」「次へ」。pixels が nullptr、または表示用バッファが無くて
+    // 出せなかったときは「撮り直す」だけ。候補を出せたら true (ボタン 0 =「撮り直す」、1 =「次へ」)、
     // 出せなかったら false (ボタン 0 =「撮り直す」)。
     bool showReview(const char* title, const uint16_t* pixels, int width, int height);
-    // REVIEW: edge の候補 JPEG を全面に出し、タイトル帯と「保存する」「撮り直す」を重ねる。
+    // REVIEW: edge の候補 JPEG を全面に出し、タイトル帯と「撮り直す」「次へ」を重ねる。
     // ヘッダの大きさが 320x240 でない、またはデコードできなければ、画面を変えずに false。
     bool showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len);
     // SHUTTER: 全面を白くする (フラッシュ)。ボタンなし。プレビュー用バッファの中身は変えない。
@@ -99,11 +99,10 @@ public:
     void showReviewEmpty(const char* title, const char* text);
     // UPLOADING: 「写真を準備中」。captured=true なら上に「撮れたよ」を出す (自動採用のとき)。
     void showUploading(const char* title, bool captured);
-    // PHOTO_QR: 写真 QR + 削除予定時刻 + 「次へ」「撮り直す」。QR を作れなければ false
+    // QR: タイトル帯 (右側に削除予定時刻) + 写真 QR (左) と投稿 QR (右) + 「撮り直す」「終了」
+    // (docs/design/ui-review-two-qr.md)。どちらかの QR を作れなければ false
     // (呼び出し側が ERROR 画面に切り替える)。
-    bool showPhotoQr(const char* title, const char* photo_url, const char* expires_at);
-    // X_QR: 投稿 QR + 案内 + 「戻る」「終了」。QR を作れなければ false。
-    bool showXQr(const char* title, const char* share_url);
+    bool showQr(const char* title, const char* photo_url, const char* share_url, const char* expires_at);
     // ERROR: 理由 + 「再試行」「終了」。can_retry=false なら「終了」だけ (ボタン 0 =「終了」)。
     void showError(const char* title, const char* reason, bool can_retry = true);
     // DIAG: 診断 (複数行、'\n' 区切り) + 「再接続」「判定なしで撮影」。戻るは頭部タッチ。

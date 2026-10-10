@@ -27,7 +27,10 @@ y=192 │ [撮り直す]            [終了]           │   ← ボタン帯 (k
 y=240 └────────────────────────────────────┘
 ```
 
-- QR の描画は既存の `view::qr()` (`view/widgets.cpp`) をそのまま 2 回呼ぶ。`lv_qrcode` は ECC M で入る最小 version を選び、1 モジュール = floor(size / モジュール数) px で描く。写真 URL (`https://stackchan-gallery.na2kera.workers.dev/p/<token>`、70〜80 文字、version 4〜5 = 33〜37 モジュール) は size 132 で 3 px/モジュール (99〜111 px)、X の URL (`…/share/x`、約 50 文字、version 3 = 29 モジュール) は 4 px (116 px)。
+- QR の描画は既存の `view::qr()` (`view/widgets.cpp`) を 2 回呼び、`Qrcode::setQuietZone(true)` (LVGL 9.4 の `lv_qrcode_set_quiet_zone()`) を有効にする。quiet zone ありの `lv_qrcode` は、ECC M で入る最小 version から +2 までのうち `size % (モジュール数 + 4)` が最小の version を選び、1 モジュール = floor(size / (モジュール数 + 4)) px で中央に描く (白地の内側に片側 2 モジュール以上の余白が残る)。size 132 での見積もり:
+  - 写真 URL (`https://stackchan-gallery.na2kera.workers.dev/p/<22 文字のトークン>`、70 文字): 最小 v5 → v5 (37 モジュール) × 3 px = 111 px、余白 片側 10 px。
+  - X の URL (`https://stackchan-gallery.na2kera.workers.dev/share/x`、53 文字): v3-M の上限 42 バイトを超えるので最小 v4 → v5 (37 モジュール) × 3 px = 111 px、余白 片側 10 px。quiet zone なしだと v4 (33 モジュール) × 4 px = 132 px で白地いっぱいになり余白が無くなる (レビューで指摘、quiet zone を採用)。
+  - 固定 URL (edge 無効ビルド、38 文字 / 27 文字): どちらも v3 (29 モジュール) × 4 px = 116 px、余白 片側 8 px。
 - 既存の定数 `kQrSize/kQrX/kQrY/kQrTextX/kQrTextW` (`view/widgets.h:32-37`) は使われなくなるので、新しい定数に置き換える (`kQrPairSize = 132`、`kQrLeftX = 20`、`kQrRightX = 168`、`kQrPairY = 56`、見出し `Rect`)。`static_assert` でボタン帯と重ならないことを保つ。
 - 「削除予定 HH:MM」は残す (写真の期限は利用者に要る)。置き場所は、見出し行の高さを 24 にして QR を y=56 から 132 にすると y=188 で帯の直前になるため、**見出し行の右端 (X の見出しの右) ではなく、タイトル帯の右側** (タイトル「写真を保存」の右に `削除予定 14:52` を muted 色で) に置く。タイトル帯の幅に収まらなければ「14:52まで」の短縮も可。色・フォントは既存のものだけを使う。
 - 色・フォント・ボタン帯・タイトル帯の見た目は変えない。

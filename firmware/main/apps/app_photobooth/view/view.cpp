@@ -36,6 +36,9 @@ constexpr Rect kCaptureBox{kScreenW - 88, 0, 88, 56};
 constexpr Rect kBody{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - kButtonBarH - 8};
 constexpr Rect kBodyNoButtons{8, kTitleH + 4, kScreenW - 16, kScreenH - kTitleH - 8};
 
+// QR: タイトル帯の右側の「削除予定 HH:MM」。タイトル (「写真を保存」100px + 左余白 8) の右から帯の右端 -8 まで。
+constexpr Rect kQrExpires{120, 0, kScreenW - 8 - 120, kTitleH};
+
 // 待機: ボタン帯のすぐ上の 1 行。左に警告、右に接続状態。
 constexpr int32_t kIdleStatusY = kScreenH - kButtonBarH - 26;
 constexpr int32_t kIdleLinkW   = 100;
@@ -345,7 +348,7 @@ bool View::showReview(const char* title, const uint16_t* pixels, int width, int 
         img.setSrc(&preview_dsc_);
         img.align(LV_ALIGN_CENTER, 0, 0);
         titleBar(*page_, title);
-        static const char* const kLabels[] = {str::kBtnSave, str::kBtnRetake};
+        static const char* const kLabels[] = {str::kBtnRetake, str::kBtnNext};
         addButtons(kLabels, 2);
         return true;
     }
@@ -407,7 +410,7 @@ bool View::showReviewJpeg(const char* title, const uint8_t* jpeg, size_t len)
     img.setSrc(review_image_->image_dsc());
     img.align(LV_ALIGN_CENTER, 0, 0);
     titleBar(*page_, title);
-    static const char* const kLabels[] = {str::kBtnSave, str::kBtnRetake};
+    static const char* const kLabels[] = {str::kBtnRetake, str::kBtnNext};
     addButtons(kLabels, 2);
     return true;
 }
@@ -483,36 +486,33 @@ void View::showUploading(const char* title, bool captured)
     textBox(*page_, page_->root(), kBodyNoButtons, text, font::body(), color::text(), Align::Center);
 }
 
-bool View::showPhotoQr(const char* title, const char* photo_url, const char* expires_at)
+bool View::showQr(const char* title, const char* photo_url, const char* share_url, const char* expires_at)
 {
     LvglLockGuard lock;
     newPage();
-    const bool ok = qr(*page_, kQrX, kQrY, kQrSize, photo_url);
-    // 右欄: 1 行目に状態名、その下に削除予定時刻
-    textBox(*page_, page_->root(), Rect{kQrTextX, kQrY, kQrTextW, 28}, title, font::body(), color::text(),
-            Align::Left);
-    textBox(*page_, page_->root(), Rect{kQrTextX, kQrY + 44, kQrTextW, 24}, str::kExpiresLabel, font::body(),
-            color::text(), Align::Left);
-    textBox(*page_, page_->root(), Rect{kQrTextX, kQrY + 68, kQrTextW, 28}, expires_at, font::body(), color::text(),
-            Align::Left);
-    static const char* const kLabels[] = {str::kBtnNext, str::kBtnRetake};
+    titleBar(*page_, title);
+    // タイトル帯の右側に「削除予定 HH:MM」(muted)。帯の上に透明な箱を重ねて右寄せにする。
+    char expires[32];
+    snprintf(expires, sizeof(expires), "%s %s", str::kExpiresLabel, expires_at);
+    auto& expires_label =
+        textBox(*page_, page_->root(), kQrExpires, expires, font::body(), color::muted(), Align::Left);
+    expires_label.setTextAlign(LV_TEXT_ALIGN_RIGHT);
+    // 各 QR の上に見出し
+    textBox(*page_, page_->root(), Rect{kQrLeftX, kQrHeadingY, kQrPairSize, kQrHeadingH}, str::kTitlePhotoQr,
+            font::body(), color::text(), Align::Center);
+    textBox(*page_, page_->root(), Rect{kQrRightX, kQrHeadingY, kQrPairSize, kQrHeadingH}, str::kTitleXQr,
+            font::body(), color::text(), Align::Center);
+    const bool photo_ok = qr(*page_, kQrLeftX, kQrPairY, kQrPairSize, photo_url);
+    const bool share_ok = qr(*page_, kQrRightX, kQrPairY, kQrPairSize, share_url);
+    static const char* const kLabels[] = {str::kBtnRetake, str::kBtnExit};
     addButtons(kLabels, 2);
-    return ok;
-}
-
-bool View::showXQr(const char* title, const char* share_url)
-{
-    LvglLockGuard lock;
-    newPage();
-    const bool ok = qr(*page_, kQrX, kQrY, kQrSize, share_url);
-    textBox(*page_, page_->root(), Rect{kQrTextX, kQrY, kQrTextW, 28}, title, font::body(), color::text(),
-            Align::Left);
-    const int32_t y = kQrY + 40;
-    textBox(*page_, page_->root(), Rect{kQrTextX, y, kQrTextW, kScreenH - kButtonBarH - 4 - y}, str::kXQrGuide,
-            font::body(), color::text(), Align::Left);
-    static const char* const kLabels[] = {str::kBtnBack, str::kBtnExit};
-    addButtons(kLabels, 2);
-    return ok;
+    if (!photo_ok) {
+        mclog::tagError(kTag, "photo QR cannot be drawn");
+    }
+    if (!share_ok) {
+        mclog::tagError(kTag, "share QR cannot be drawn");
+    }
+    return photo_ok && share_ok;
 }
 
 void View::showError(const char* title, const char* reason, bool can_retry)

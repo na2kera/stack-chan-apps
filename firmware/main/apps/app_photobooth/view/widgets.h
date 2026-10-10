@@ -27,14 +27,17 @@ constexpr int32_t kButtonGap  = 8;   // ボタン間隔 (左右端の余白も�
 constexpr int32_t kButtonPadY = 5;   // ボタン帯の中でのボタン上下余白
 constexpr int kMaxButtons     = 2;
 
-// QR 画面 (PHOTO_QR / X_QR) はタイトル帯を持たない。
-// 左上に 184x184 の白地 QR 領域、右欄の 1 行目に状態名、その下に説明文を置く (design §5)。
-constexpr int32_t kQrSize  = 184;
-constexpr int32_t kQrX     = 8;
-constexpr int32_t kQrY     = 4;                    // y=4..188。ボタン帯 (y=192〜) と重ならない
-constexpr int32_t kQrTextX = kQrX + kQrSize + 8;   // 200
-constexpr int32_t kQrTextW = kScreenW - kQrTextX - 4;  // 116
-static_assert(kQrY + kQrSize <= kScreenH - kButtonBarH, "QR overlaps the button bar");
+// QR 画面 (QR): タイトル帯の下に見出し 2 つ、その下に 132x132 の白地 QR を左右に並べる
+// (docs/design/ui-review-two-qr.md §2)。左 = 写真ページ、右 = X の投稿画面。
+constexpr int32_t kQrPairSize   = 132;
+constexpr int32_t kQrLeftX      = 20;
+constexpr int32_t kQrRightX     = 168;                         // 左 QR との間は 16
+constexpr int32_t kQrHeadingH   = 24;                          // 各 QR の上の見出し (幅は QR と同じ)
+constexpr int32_t kQrHeadingY   = kTitleH;                     // y=32..56
+constexpr int32_t kQrPairY      = kQrHeadingY + kQrHeadingH;   // y=56..188。ボタン帯 (y=192〜) と重ならない
+static_assert(kQrPairY + kQrPairSize <= kScreenH - kButtonBarH, "QR overlaps the button bar");
+static_assert(kQrLeftX + kQrPairSize < kQrRightX, "QRs overlap each other");
+static_assert(kQrRightX + kQrPairSize <= kScreenW, "right QR is off screen");
 
 struct Rect {
     int32_t x;

@@ -169,11 +169,14 @@ Label& textBox(Page& page, lv_obj_t* parent, const Rect& rect, const char* text,
 
 bool qr(Page& page, int32_t x, int32_t y, int32_t size, const char* text)
 {
-    // 白地の領域を先に敷き、その中央に QR を置く。lv_qrcode は ECC M で入る最小の version を選び、
-    // 1 モジュールを size / モジュール数 (切り捨て) px に拡大して中央に描く。
+    // 白地の領域を先に敷き、その中央に QR を置く。quiet zone を有効にすると lv_qrcode は ECC M で入る
+    // 最小の version から +2 までの中で、1 モジュール = size / (モジュール数 + 4) (切り捨て) px にしたときの
+    // 余りが最小の version を選んで中央に描く。白地の内側に片側 2 モジュール以上の余白が必ず残る
+    // (QR 2 つを並べた 132px では、余白なしだと URL によって QR が白地いっぱいになるため。ui-review-two-qr.md §2)。
     panel(page, page.root(), Rect{x, y, size, size}, lv_color_hex(0xFFFFFF));
     auto& code = page.add<Qrcode>(page.root());
     code.setSize(size);
+    code.setQuietZone(true);
     code.setDarkColor(lv_color_hex(0x000000));
     code.setLightColor(lv_color_hex(0xFFFFFF));
     code.setPos(x, y);
