@@ -5,6 +5,10 @@
   "compatibility_date": "2026-09-26",
   "workers_dev": true,
   "preview_urls": false,
+  // Worker とコンテナのログをダッシュボードで見る (docs/design/step6-cloud-device.md §3.1)
+  "observability": {
+    "enabled": true
+  },
   "containers": [
     {
       "class_name": "EdgeContainer",
@@ -34,8 +38,8 @@
   },
   "vars": {
     "DEVICE_ID": "stackchan-01",
-    // 公開 gallery の URL (https://stackchan-gallery.<account>.workers.dev)。空のままだと 503
-    "GALLERY_URL": ""
+    // 公開 gallery の URL (秘密ではない)。空のままだと 503 misconfigured
+    "GALLERY_URL": "https://stackchan-gallery.na2kera.workers.dev"
   }
   // Secret (wrangler secret put): EDGE_DEVICE_KEY, GALLERY_KEY
 }

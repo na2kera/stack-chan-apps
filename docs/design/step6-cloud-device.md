@@ -56,7 +56,7 @@ HTTPS 化と JPEG 化は同時にしない (切り分けのため)。各サブ�
 | 項目 | 値 | 根拠 |
 | --- | --- | --- |
 | 観測性 | `wrangler.jsonc` に `"observability": { "enabled": true }` を追加 (トップレベル。コンテナのログにも効く) | Container のログをダッシュボードで見るのに必要。計測の前に入れる |
-| Worker のログ | `src/index.ts` の `fetch` で `handle()` を包み、**全応答で 1 件** JSON を出す: `event` (`early` / `forward` / `forward_error`)、`kind` (`hello` / `frame` / `candidate` / `save` / `photo` / `other`)、`status`、`ms`、`colo` (`request.cf?.colo`)。転送で例外が出たら 502 `upstream_error` を返してからログ | 早期の 401 / 411 / 413 も転送の成否も同じ形で数える。鍵・画像・URL・ヘッダ値は出さない (edge の `logging_setup.py` と同じ方針) |
+| Worker のログ | `src/index.ts` の `fetch` で `handle()` を包み、**全応答で 1 件** JSON を出す: `event` (`early` / `forward` / `forward_error`)、`kind` (`hello` / `frame` / `candidate` / `save` / `photo` / `other`)、`status`、`ms`、`colo` (`request.cf?.colo`)。転送で例外が出たら 502 `upstream_error` を返してからログ | 早期の 401 / 411 / 413 も転送の成否も同じ形で数える。鍵・画像・URL・ヘッダ値は出さない (edge の `logging_setup.py` と同じ方針)。コンテナ (edge) のログには従来どおり `device_id` と `session_id` を出す (秘密ではない。`device_id` は固定の識別子、`session_id` はランダムな UUID で写真 URL のトークンとは紐づかず、デバッグに要る)。鍵・写真 URL・トークン・画像は出さない |
 | frame の `Content-Length` | edge と同じ契約に揃える: 無い → `411 length_required`、十進数でない・負 → `400 invalid_header:content-length`、2 MiB 超 → `413 frame_too_large` (現状)。どれもコンテナを起こさない。**初回デプロイで Worker → コンテナの経路で `Content-Length` が保たれることを確かめてから入れる** | LAN 直結と Worker 経由でエラー契約を変えない (`edge/src/edge/api.py:59,62`)。不要な起動と課金を防ぐ |
 | 鍵 | `openssl rand -hex 32` で生成。`EDGE_DEVICE_KEY` と `GALLERY_KEY` は `wrangler secret put`。ローテーションは「新しい値を put → device の app を閉じてリクエストを止める → 5 分待つ (コンテナ停止) → 再開」 | step5「設定の反映」のとおり、動いているコンテナには新しい値が渡らない |
 | `GALLERY_URL` | `wrangler.jsonc` の `vars` に `https://stackchan-gallery.na2kera.workers.dev` を書く (Git に入れてよい。秘密ではない) | 空だと 503 `misconfigured` |
@@ -126,7 +126,7 @@ UI の状態 (待機画面の 1 行):
 
 - cold hello: 最初の要求から 200 までの時間、試行回数、各応答コード
 - warm hello の RTT (件数、p50 / p95 / max)
-- frame: 本文バイト数、RTT、`latency_ms`、実効 fps (件数、p50 / p95 / max)。`--format` ごとに別に取る
+- frame: 本文バイト数、RTT、`latency_ms` (件数、p50 / p95 / max)、fps は送信間隔の p50 / p95 と実効 fps (成功件数 ÷ 撮影時間)。`--format` ごとに別に取る
 - `GET …/candidate`: RTT、本文バイト数、`Content-Length` 付きか chunked か
 - save: `photo_ready` までの時間
 - 候補表示は `--candidate-via-edge` で edge 経由の `GET …/candidate` を使う (今はローカルの画像。`webcam_device.py:254`)
@@ -209,7 +209,7 @@ firmware/
 
 ## 6. 受け入れチェック
 
-- [ ] 6a: `wrangler deploy` で Worker が立ち、試験 1〜8 を記録した。`docs/measurements/step6-<date>.md` がある。
+- [x] 6a: `wrangler deploy` で Worker が立ち、試験 1〜8 を記録した。`docs/measurements/step6-<date>.md` がある。→ [step6-2026-10-10.md](../measurements/step6-2026-10-10.md)。試験 3 で切断後も起動が続いたので `503 starting` は不要。試験 7a は `wrangler deploy` で rollout が起きず、Containers API で同じイメージの rollout を作って確かめた
 - [ ] 6b: `idf.py build` (`config_local.h` あり http / あり https / なし) が通る。`firmware-tests` に `edge_url` のテストが入り CI が通る。試験 9〜20。
 - [ ] 6c: 試験 21〜23。`logStats()` に JPEG の統計が出る。
 - [ ] 6d: 試験 24。決めた値 (`config.h`、`wrangler.jsonc`) と根拠を計測記録に書いた。

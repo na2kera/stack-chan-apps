@@ -1,5 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
-import { containerEnv, handle, type ProxyEnv } from "./proxy";
+import { containerEnv, serve, type ProxyEnv } from "./proxy";
 
 export interface Env extends ProxyEnv {
   EDGE: DurableObjectNamespace<EdgeContainer>;
@@ -20,6 +20,9 @@ export class EdgeContainer extends Container<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    return handle(request, env, (req) => getContainer(env.EDGE, INSTANCE_NAME).fetch(req));
+    // 全応答で 1 件の構造化ログを出し、転送の例外は 502 upstream_error にする (serve())
+    return serve(request, env, (req) => getContainer(env.EDGE, INSTANCE_NAME).fetch(req), {
+      colo: typeof request.cf?.colo === "string" ? request.cf.colo : null,
+    });
   },
 } satisfies ExportedHandler<Env>;
