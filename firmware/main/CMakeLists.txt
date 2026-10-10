@@ -339,6 +339,17 @@ if(PHOTOBOOTH_NO_EDGE)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_NO_EDGE=1)
 endif()
 
+# app_photobooth: `idf.py -DPHOTOBOOTH_FRAME_RGB565=1 build` で frame を RGB565 のまま送る (既定は JPEG)。
+# 戻すときは `idf.py -DPHOTOBOOTH_FRAME_RGB565=0 build` (CMake のキャッシュに残るため)。
+if(PHOTOBOOTH_FRAME_RGB565)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_FRAME_RGB565=1)
+endif()
+# app_photobooth の試験 22: `idf.py -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で N 回に 1 回 JPEG の符号化を失敗扱いに
+# する (デバッグ用)。戻すときは `-DPHOTOBOOTH_JPEG_FAIL_EVERY=0`。
+if(PHOTOBOOTH_JPEG_FAIL_EVERY)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PHOTOBOOTH_JPEG_FAIL_EVERY=${PHOTOBOOTH_JPEG_FAIL_EVERY})
+endif()
+
 # Add generation rules
 add_custom_command(
     OUTPUT ${LANG_HEADER}

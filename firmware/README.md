@@ -42,6 +42,7 @@ ctest --test-dir build-host-tests --output-on-failure
 | `time_format_test` | `app_photobooth/flow/time_format` (写真の期限の表示) |
 | `edge_url_test` | `app_photobooth/net/edge_url` (`EDGE_BASE_URL` の分解) |
 | `link_logic_test` | `app_photobooth/net/link_logic` (接続の失敗の分類・タイムアウト表・接続状態・定期 hello) |
+| `frame_stats_test` | `app_photobooth/net/frame_stats` (frame の形式の選択・符号化失敗の注入・送信統計の集計) |
 | `edge_config_test_*` / `edge_config_rejects_*` | `app_photobooth/net/edge_config.h` (`config_local.h` の書き方の受け付けと旧形式の検出。`tests/edge_config_fixtures/`) |
 
 - `edge_parse_test` は ArduinoJson を使う。`components/ArduinoJson` (`fetch_repos.py` が取る) があればそれを、
@@ -70,6 +71,7 @@ upstream との差分は次だけにしている。
 | アプリの登録 | `main/apps/apps.h` の include 各 1 行、`main/main.cpp` の `installApp` 各 1 行 (AppPhotobooth → AppRoulette の順で最後に足す) |
 | セリフ WAV の埋め込み | `main/CMakeLists.txt` の `PHOTOBOOTH_VOICES` / `ROULETTE_VOICES` (`EMBED_FILES`。ファイル名がシンボル名になるので、スロットの WAV は `rl_` 始まり) |
 | edge 通信なしでビルドするスイッチ | `main/CMakeLists.txt` の `PHOTOBOOTH_NO_EDGE` (`idf.py -DPHOTOBOOTH_NO_EDGE=1 build`) |
+| frame を RGB565 のまま送るスイッチ・符号化失敗の注入 (試験用) | `main/CMakeLists.txt` の `PHOTOBOOTH_FRAME_RGB565` / `PHOTOBOOTH_JPEG_FAIL_EVERY` |
 | 起動時の自動ファーム更新を止める | `patches/xiaozhi-esp32.patch` (`xiaozhi-esp32/main/application.cc` の `CheckNewVersion()`) |
 
 ### 自動更新を止めている理由と範囲
@@ -140,8 +142,9 @@ SSID / パスワードはコードに書かない。
    EDGE_DEVICE_KEY=<config_local.h と同じ鍵> uv run edge --host 0.0.0.0
    ```
 
-   macOS のファイアウォールが有効なら、Python への受信を許可する。RGB565 のバイト順は edge 設定の
-   `rgb565_byte_order = "little"` (アプリはカメラ層の RGB565 リトルエンディアンをそのまま送る)。
+   macOS のファイアウォールが有効なら、Python への受信を許可する。frame は既定で JPEG (下の「frame の形式」)。
+   RGB565 で送るビルドのときのバイト順は edge 設定の `rgb565_byte_order = "little"`
+   (アプリはカメラ層の RGB565 リトルエンディアンをそのまま送る)。
 4. `idf.py build` して書き込み、ランチャーから Photobooth を開く。待機画面の右下が「接続中」になれば繋がっている。
    「準備中」は接続はできたが edge の応答待ち (cloud の cold start など。5 秒ごとの `hello` で再試行する)。
    「接続なし」のまま画面をタッチすると診断画面が開き、Wi-Fi の状態 / IP / 接続先 `scheme://host:port` / 応答 /
@@ -153,7 +156,11 @@ SSID / パスワードはコードに書かない。
      「証明書エラー」(証明書を検証できない)、「時刻未同期」(本体の時刻が不正で証明書の期限を検査できない)、
      「TLS接続失敗」(その他の TLS の失敗)、「準備中 (応答待ち)」(接続後に `hello` の応答が 8 秒以内に来ない)。
    - 「認証エラー(IDか鍵が違う)」は `DEVICE_ID` / `EDGE_SHARED_KEY` と edge 側の不一致 (HTTP 401)。
-   - シリアルログの `PB-Edge: send N frames ... (x.x fps), rtt avg ...` (5 秒ごと) で送信 fps と往復時間が分かる。
+   - シリアルログの `PB-Edge: send N frames (jpeg) ... (x.x fps), attempts N, frame failures N (send N, encode N),
+     rtt avg ...` (5 秒ごと) で送信 fps と往復時間、frame の失敗の内訳が分かる。JPEG のときは
+     `PB-Edge: jpeg: encoded N, jpeg_encode_ms avg .. max .., size avg .. max .. B, failed N` (符号化の所要と大きさ) と
+     `PB-Edge: heap: internal free .. min .. largest .., psram free .. largest ..` (内部 RAM の最小空き・最大連続領域)
+     も出る。
      5 秒ごとに `PB-Edge: hello N (ok N, starting N) rtt avg ... max ... ms, link ..., stack free ...` と
      `PB-Edge: connections: new N reused M` も出る (https で new ばかりなら毎回 TLS ハンドシェイクしている)。
      定期 `hello` は判定つきの撮影の開始から写真の準備完了 (QR 表示) までは送らない (その間の接続状態は
@@ -173,6 +180,12 @@ cloudflared tunnel --url http://localhost:8765                             # 別
 URL は起動ごとに変わり、SLA も無いので開発の確認専用 (本番の設定値には使わない)。`~/.cloudflared/config.yaml`
 があると quick tunnel は起動しない。確かめられるのは端末 → Cloudflare の TLS (証明書・DNS・SNI) と持続接続までで、
 クラウドの edge (Worker・コンテナ・cold start) の挙動は確かめられない。
+
+**frame の形式**: 既定では net タスクが frame を JPEG (品質 80、QVGA で数十 KB) にして `X-Format: jpeg` で送る
+(`docs/design/step6-cloud-device.md` §3.3)。`idf.py -DPHOTOBOOTH_FRAME_RGB565=1 build` でビルドすると 6b までと同じ
+RGB565 (153,600 バイト、`X-Format: rgb565`) で送る。CMake のキャッシュに残るので、戻すときは
+`idf.py -DPHOTOBOOTH_FRAME_RGB565=0 build`。符号化に失敗したフレームは捨てて (RGB565 では送らない) 統計に数える。
+試験用に `idf.py -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build` で N 回に 1 回符号化を失敗扱いにできる (戻すときは `=0`)。
 
 **edge なしでビルドする**: `config_local.h` が無い、または `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` でビルドすると、
 Wi-Fi に繋がず、ステップ1 と同じ単体動作 (QR は `config.h` の固定 URL) になる。`-DPHOTOBOOTH_NO_EDGE` は

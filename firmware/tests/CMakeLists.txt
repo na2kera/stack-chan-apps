@@ -160,6 +160,20 @@ target_compile_features(link_logic_test PRIVATE cxx_std_17)
 
 add_test(NAME link_logic_test COMMAND $<TARGET_FILE:link_logic_test>)
 
+# app_photobooth の net/frame_stats (frame の形式の選択、符号化失敗の注入、送信統計の集計)
+add_executable(frame_stats_test
+    frame_stats_test.cpp
+    ../main/apps/app_photobooth/net/frame_stats.cpp
+)
+
+target_include_directories(frame_stats_test PRIVATE
+    ../main
+)
+
+target_compile_features(frame_stats_test PRIVATE cxx_std_17)
+
+add_test(NAME frame_stats_test COMMAND $<TARGET_FILE:frame_stats_test>)
+
 # app_photobooth の net/edge_config.h (config_local.h の書き方の受け付けと旧形式の検出)。
 # フィクスチャごとに config.h / net/edge_config.h / config_local.h を並べたディレクトリを作ってコンパイルする。
 set(PB_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/apps/app_photobooth)
