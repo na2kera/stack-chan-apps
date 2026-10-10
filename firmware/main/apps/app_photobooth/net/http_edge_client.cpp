@@ -333,6 +333,7 @@ struct EdgeWorker {
     std::atomic<bool> ever_ok{false};
     std::atomic<uint8_t> failures{0};  // 連続失敗回数
     std::atomic<bool> starting{false};  // 直近の hello が「準備中」(接続後の応答待ちで期限切れ、または 5xx)
+    std::atomic<bool> hello_settled{false};  // 最初の hello の結果 (打ち切り以外) が出た
     std::atomic<bool> latency_sensitive{false};  // hello を止める段階 (Flow が setLatencySensitive で知らせる)
 
     // ---- begin() で決めて以後は読むだけ ----
@@ -486,6 +487,11 @@ LinkState HttpEdgeClient::linkState()
     }
     const auto& w = *worker_;
     link::LinkSnapshot snap;
+    // hello_settled を最初に読む。net タスクは hello の結果 (noteSuccess() / noteFailure() による ever_ok・
+    // failures・last_ok_ms と starting) を書いた後に hello_settled を立てるので、true を読めたなら以下で
+    // 読む状態はその結果以降のもの。逆順だと「古い ever_ok=false と新しい hello_settled=true」を組み合わせて
+    // Offline と判定し、最初の hello の成功直後のタッチで診断画面に入りうる。
+    snap.hello_settled = w.hello_settled.load(std::memory_order_acquire);
     snap.ever_ok    = w.ever_ok.load();
     snap.failures   = w.failures.load();
     snap.last_ok_ms = w.last_ok_ms.load();  // now より先に読む (EdgeWorker::online() と同じ理由)
@@ -1224,6 +1230,11 @@ void EdgeWorker::sendHello()
     const bool was_starting    = starting.load();
     const bool now_starting    = link::startingAfterHello(was_starting, cls);
     starting.store(now_starting);
+    // hello_settled は結果の状態 (request() の中の noteResponse() と上の starting) を書いた後に立てる
+    // (読み側の HttpEdgeClient::linkState() はこれを最初に読む)。
+    if (cls != link::ReplyClass::Aborted && !hello_settled.exchange(true, std::memory_order_acq_rel)) {
+        mclog::tagInfo(kTag, "first hello settled (status {}, {} ms)", r.status, rtt);
+    }
     if (cls != link::ReplyClass::Aborted) {
         ++stats_hello;
         stats_hello_rtt_sum += rtt;
@@ -1794,6 +1805,14 @@ void EdgeWorker::noteResponse(const char* op, const Reply& r)
 
 void EdgeWorker::noteSuccess()
 {
+    {
+        // DIAG の「再接続」で置いた「再接続中」は成功で消す。それ以外は「最後の通信エラー」として残す
+        // (edge_client.h の lastError())。
+        std::lock_guard<std::mutex> lock(mutex);
+        if (link::clearErrorOnSuccess(last_error)) {
+            last_error[0] = '\0';
+        }
+    }
     last_ok_ms.store(nowMs());
     ever_ok.store(true);
     starting.store(false);

@@ -110,7 +110,7 @@ void Flow::begin(uint32_t now_ms, bool camera_ok, bool view_ok)
         return;
     }
     state_ = State::Idle;
-    mclog::tagInfo(kTag, "start in {} (edge {})", stateName(state_), kEdgeEnabled ? "http" : "disabled");
+    mclog::tagInfo(kTag, "start in {} (edge {})", stateName(state_), kEdgeEnabled ? "enabled" : "disabled");
     showIdle();
 }
 
@@ -390,6 +390,7 @@ void Flow::update(const shared::hw::Event& ev, uint32_t now_ms)
     // edge の停止にも気づけるようにする (「撮り直す」が古い online 判定で始まらないように)。
     edge_.setLatencySensitive(session_.active && judged_ && !photo_ready_);
     head_.update(now_ms);
+    starting_elapsed_ms_ = starting_clock_.update(edge_.linkState(), now_ms);  // 「準備中」が続いている時間
     if (exit_requested_) {
         return;
     }
@@ -450,11 +451,19 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
             enter(State::Announce, now_ms);
             return;
         }
-        if (!edge_.isOnline()) {
-            // spec §9: edge 不通なら自動判定つきの撮影は始めず、診断画面を開く。
-            mclog::tagInfo(kTag, "edge offline ({}); open diagnostics", edge_.lastError());
-            enter(State::Diag, now_ms);
-            return;
+        switch (net::link::idleTouch(edge_.linkState(), starting_elapsed_ms_)) {
+            case net::link::IdleTouch::Start:
+                break;
+            case net::link::IdleTouch::Ignore:
+                // 最初の hello の結果待ち・cold start (「準備中」が STARTING_TOUCH_IGNORE_MS 未満)。
+                // 診断は開かず待機のまま (予約もしない)。
+                mclog::tagInfo(kTag, "edge starting ({} ms); touch ignored", starting_elapsed_ms_);
+                return;
+            case net::link::IdleTouch::OpenDiag:
+                // spec §9: edge 不通なら自動判定つきの撮影は始めず、診断画面を開く。
+                mclog::tagInfo(kTag, "edge offline ({}); open diagnostics", edge_.lastError());
+                enter(State::Diag, now_ms);
+                return;
         }
         if (!checkCamera(now_ms)) return;
         startSession(now_ms, true);

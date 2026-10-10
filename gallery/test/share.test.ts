@@ -9,7 +9,7 @@ describe("GET /share/x", () => {
     const redirect = new URL(location);
     expect(`${redirect.origin}${redirect.pathname}`).toBe("https://x.com/intent/tweet");
     expect(redirect.searchParams.get("text")).toBe(
-      "@na2kera_0510 の #ｽﾀｯｸﾁｬﾝ に撮ってもらいました！　#StackChan #STECHFES2026 #STECH",
+      "@na2kera_0510 の #ｽﾀｯｸﾁｬﾝ に写真を撮ってもらいました！　#StackChan #n_study",
     );
     expect(location).not.toContain("gallery.test");
     expect(location).not.toContain("/p/");

@@ -7,6 +7,7 @@
 // docs/design/step6-cloud-device.md §3.2) をホストで確かめる。
 #include <apps/app_photobooth/config.h>
 #include <apps/app_photobooth/net/link_logic.h>
+#include <apps/app_photobooth/view/strings.h>
 
 #include <cerrno>
 #include <cstdint>
@@ -180,6 +181,7 @@ void testLinkState()
 {
     constexpr uint32_t kWindow = 10000;
     link::LinkSnapshot s;
+    s.hello_settled = true;  // 最初の hello の結果が出た後 (出る前は testLinkStateBeforeFirstHello)
     expectState(link::linkState(s, true, 0, kWindow), LinkState::Offline, "never ok");
     s.starting = true;
     expectState(link::linkState(s, true, 0, kWindow), LinkState::Starting, "never ok + starting");
@@ -212,10 +214,117 @@ void testLinkState()
     expectTrue(!link::linkOnline(w, 0xFFFFFF00u + kWindow, kWindow), "wraparound at window");
 }
 
+// net タスクを始めてから最初の hello の結果が出るまでは Starting (クラウドでは cold start + TLS で 2〜10 秒)。
+// その間のタッチで診断画面に入らないように (実機 6b の初回で起きた)。
+void testLinkStateBeforeFirstHello()
+{
+    constexpr uint32_t kWindow = 10000;
+    link::LinkSnapshot s;  // 結果が 1 つも無い
+    expectState(link::linkState(s, true, 0, kWindow), LinkState::Starting, "no hello result yet: starting");
+    expectState(link::linkState(s, true, 60000, kWindow), LinkState::Starting, "no hello result yet: no time limit");
+    expectState(link::linkState(s, false, 0, kWindow), LinkState::Offline, "no hello result yet + no wifi: offline");
+
+    // 最初の hello が確定失敗 (DNS / TCP / TLS / 証明書) → Offline
+    link::LinkSnapshot fail = s;
+    fail.hello_settled = true;
+    fail.starting      = link::startingAfterHello(fail.starting, link::ReplyClass::Unreachable);
+    fail.failures      = 1;
+    expectState(link::linkState(fail, true, 0, kWindow), LinkState::Offline, "first hello unreachable: offline");
+
+    // 最初の hello が接続後の期限切れ・5xx → Starting のまま
+    link::LinkSnapshot slow = s;
+    slow.hello_settled = true;
+    slow.starting      = link::startingAfterHello(slow.starting, link::ReplyClass::Starting);
+    expectState(link::linkState(slow, true, 0, kWindow), LinkState::Starting, "first hello response timeout: starting");
+
+    // 最初の hello が成功 (内部の再送で成功した場合も、1 回目の期限切れは残らない) → Online
+    link::LinkSnapshot ok = s;
+    ok.hello_settled = true;
+    ok.ever_ok       = true;
+    ok.last_ok_ms    = 5000;
+    ok.starting      = link::startingAfterHello(ok.starting, link::ReplyClass::Success);
+    expectState(link::linkState(ok, true, 5000, kWindow), LinkState::Online, "first hello success: online");
+    expectState(link::linkState(ok, true, 5000 + kWindow, kWindow), LinkState::Offline, "after success, window lapses");
+
+    // 打ち切り (アプリを閉じる途中) は結果に数えないので Starting のまま (呼び出し側で hello_settled を立てない)
+    expectTrue(!link::startingAfterHello(false, link::ReplyClass::Aborted), "aborted keeps not starting");
+    expectState(link::linkState(s, true, 0, kWindow), LinkState::Starting, "aborted first hello: still starting");
+}
+
+void expectTouch(link::IdleTouch actual, link::IdleTouch expected, const char* label)
+{
+    expectEqual(static_cast<int>(actual), static_cast<int>(expected), label);
+}
+
+void testIdleTouch()
+{
+    constexpr uint32_t kIgnore = config::STARTING_TOUCH_IGNORE_MS;
+    static_assert(config::STARTING_TOUCH_IGNORE_MS > 2 * config::HELLO_TIMEOUT_MS,
+                  "ignore window must outlast one hello operation (two attempts)");
+    expectTouch(link::idleTouch(LinkState::Online, 0), link::IdleTouch::Start, "online: start");
+    expectTouch(link::idleTouch(LinkState::Online, kIgnore * 2), link::IdleTouch::Start, "online ignores elapsed");
+    expectTouch(link::idleTouch(LinkState::Starting, 0), link::IdleTouch::Ignore,
+                "starting: ignore (no diag, no reservation)");
+    expectTouch(link::idleTouch(LinkState::Starting, kIgnore - 1), link::IdleTouch::Ignore, "starting: just before limit");
+    expectTouch(link::idleTouch(LinkState::Starting, kIgnore), link::IdleTouch::OpenDiag,
+                "starting: at limit opens diag (persistent 5xx)");
+    expectTouch(link::idleTouch(LinkState::Offline, 0), link::IdleTouch::OpenDiag, "offline: open diag");
+
+    // 起動直後 (最初の hello の結果待ち) のタッチは無視
+    link::LinkSnapshot s;
+    expectTouch(link::idleTouch(link::linkState(s, true, 0, 10000), 0), link::IdleTouch::Ignore,
+                "touch before first hello result: ignore");
+    s.hello_settled = true;
+    expectTouch(link::idleTouch(link::linkState(s, true, 0, 10000), 0), link::IdleTouch::OpenDiag,
+                "touch after first hello failed: open diag");
+}
+
+void testStartingClock()
+{
+    constexpr uint32_t kIgnore = config::STARTING_TOUCH_IGNORE_MS;
+    link::StartingClock c;
+    expectEqual(c.update(LinkState::Offline, 1000), 0, "not starting: 0");
+    expectEqual(c.update(LinkState::Starting, 2000), 0, "starting begins: 0");
+    expectEqual(c.update(LinkState::Starting, 2000 + kIgnore - 1), kIgnore - 1, "starting: just before limit");
+    expectTouch(link::idleTouch(LinkState::Starting, c.update(LinkState::Starting, 2000 + kIgnore - 1)),
+                link::IdleTouch::Ignore, "clock: just before limit ignores");
+    expectTouch(link::idleTouch(LinkState::Starting, c.update(LinkState::Starting, 2000 + kIgnore)),
+                link::IdleTouch::OpenDiag, "clock: at limit opens diag");
+
+    // Starting を抜けたらリセットし、次の Starting は 0 から数える
+    expectEqual(c.update(LinkState::Online, 2000 + kIgnore + 10), 0, "left starting (online): reset");
+    expectEqual(c.update(LinkState::Starting, 50000), 0, "starting again: from 0");
+    expectEqual(c.update(LinkState::Starting, 50000 + 100), 100, "starting again: counts");
+    expectEqual(c.update(LinkState::Offline, 50200), 0, "left starting (offline): reset");
+    expectEqual(c.update(LinkState::Starting, 60000 + kIgnore), 0, "reset does not carry the old start");
+
+    // millis の一周をまたぐ
+    link::StartingClock w;
+    expectEqual(w.update(LinkState::Starting, 0xFFFFFF00u), 0, "wrap: begins");
+    expectEqual(w.update(LinkState::Starting, 0x00000100u), 0x200, "wrap: elapsed across wraparound");
+    expectTouch(link::idleTouch(LinkState::Starting, w.update(LinkState::Starting, 0x00000100u)),
+                link::IdleTouch::Ignore, "wrap: still ignored");
+    expectTouch(link::idleTouch(LinkState::Starting, w.update(LinkState::Starting, 0xFFFFFF00u + kIgnore)),
+                link::IdleTouch::OpenDiag, "wrap: limit across wraparound");
+}
+
+void testClearErrorOnSuccess()
+{
+    expectTrue(link::clearErrorOnSuccess("再接続中"), "reconnecting is cleared");
+    expectTrue(link::clearErrorOnSuccess(photobooth::str::kNetReconnecting), "kNetReconnecting is cleared");
+    expectTrue(!link::clearErrorOnSuccess("hello: 再接続中"), "prefixed reconnecting is kept");
+    expectTrue(!link::clearErrorOnSuccess("再接続中 "), "trailing text is kept");
+    expectTrue(!link::clearErrorOnSuccess(photobooth::str::kNetStartingWait), "starting wait is kept");
+    expectTrue(!link::clearErrorOnSuccess("hello: DNS失敗"), "other error is kept");
+    expectTrue(!link::clearErrorOnSuccess(""), "empty stays (nothing to clear)");
+    expectTrue(!link::clearErrorOnSuccess(nullptr), "null is safe");
+}
+
 void testLatencySensitiveKeepsOnline()
 {
     constexpr uint32_t kWindow = 10000;
     link::LinkSnapshot s;
+    s.hello_settled  = true;
     s.ever_ok        = true;
     s.last_ok_ms     = 1000;
     s.latency_sensitive = true;
@@ -279,6 +388,10 @@ int main()
     testReplyClass();
     testStartingAfterHello();
     testLinkState();
+    testLinkStateBeforeFirstHello();
+    testIdleTouch();
+    testStartingClock();
+    testClearErrorOnSuccess();
     testLatencySensitiveKeepsOnline();
     testShouldSendHello();
     std::cout << "link_logic_test: ok\n";

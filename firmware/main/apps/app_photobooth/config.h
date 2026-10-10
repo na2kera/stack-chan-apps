@@ -45,6 +45,10 @@ constexpr uint32_t EDGE_TIMEOUT_MS   = 3000;   // 1 リクエストのタイム�
 // (全体で約 16 秒)。接続後の応答待ちで切れたら「準備中」として扱い、次の hello で再試行する。
 constexpr uint32_t HELLO_TIMEOUT_MS  = 8000;
 constexpr uint32_t HELLO_INTERVAL_MS = 5000;   // 通信が無いときの hello の間隔 (接続確認)
+// 「準備中」(Starting) が続いている間、待機画面のタッチを無視する長さ。これ以降のタッチは診断画面を開く
+// (5xx が続く misconfigured / upstream_error でも再接続・判定なしの撮影に入れるように)。hello の操作全体の
+// 上限 (約 16 秒) より少し長い。
+constexpr uint32_t STARTING_TOUCH_IGNORE_MS = 20000;
 constexpr uint32_t UPLOAD_WAIT_MS    = 15000;  // UPLOADING で写真の準備を待つ上限
 constexpr uint8_t UPLOAD_RETRY       = 3;      // 保存 (review save) の送信回数の上限 (session ごと)
 
