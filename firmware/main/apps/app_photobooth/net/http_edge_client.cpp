@@ -45,6 +45,7 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 
 #include "../view/strings.h"
 #include "edge_config.h"
+#include "edge_parse.h"
 #include "network.h"
 
 namespace photobooth::net {
@@ -109,14 +110,6 @@ void copyStr(char* dst, size_t n, const char* src)
     snprintf(dst, n, "%s", src != nullptr ? src : "");
 }
 
-Hint parseHint(const char* h)
-{
-    if (h == nullptr) return Hint::None;
-    if (strcmp(h, "closer") == 0) return Hint::Closer;
-    if (strcmp(h, "too_many") == 0) return Hint::TooMany;
-    return Hint::None;
-}
-
 const char* phaseName(Phase p)
 {
     return p == Phase::Capture ? "capture" : "compose";
@@ -149,11 +142,6 @@ const char* statusText(int status)
         default:
             return status < 0 ? str::kNetError : "";
     }
-}
-
-uint8_t clampU8(int v)
-{
-    return static_cast<uint8_t>(std::min(std::max(v, 0), 255));
 }
 
 bool isSuccess(int status)
@@ -1050,47 +1038,29 @@ void EdgeWorker::pollPhoto(uint32_t now)
     if (r.status != 200) {
         return;  // 次の周期で再試行 (UPLOAD_WAIT_MS まで)
     }
-    JsonDocument doc;
-    if (deserializeJson(doc, static_cast<const char*>(json), json_len) != DeserializationError::Ok) {
+    PhotoInfo info;
+    const char* missing = "";
+    const ParseStatus ps = parsePhotoInfo(static_cast<const char*>(json), json_len, info, &missing);
+    if (ps == ParseStatus::BadJson) {
         setErrorOp("photo", statusText(kErrBadJson));
         return;
     }
-    const char* status = doc["status"] | "";
-    if (strcmp(status, "pending") == 0) {
+    if (ps == ParseStatus::Ok && info.status == PhotoInfo::Status::Pending) {
         return;
     }
-    PhotoInfo info;
     poll_active = false;
-    if (strcmp(status, "ready") == 0) {
-        const char* photo_url  = doc["photo_url"] | "";
-        const char* share_url  = doc["share_url"] | "";
-        const char* expires_at = doc["expires_at"] | "";
-        if (photo_url[0] == '\0' || share_url[0] == '\0' || expires_at[0] == '\0') {
-            // ready なら 3 つとも必須 (protocol.md)。欠けた応答で QR を出さない。
-            info.status = PhotoInfo::Status::Error;
-            copyStr(info.reason, sizeof(info.reason), "bad_response");
-            mclog::tagWarn(kTag, "photo ready without {}", photo_url[0] == '\0'   ? "photo_url"
-                                                           : share_url[0] == '\0' ? "share_url"
-                                                                                  : "expires_at");
-            setErrorOp("photo", str::kNetBadJson);
-        } else if (strlen(photo_url) >= sizeof(info.photo_url) || strlen(share_url) >= sizeof(info.share_url) ||
-                   strlen(expires_at) >= sizeof(info.expires_at)) {
-            // 切り詰めた URL の QR は出さない (spec §9「QR を捏造しない」)
-            info.status = PhotoInfo::Status::Error;
-            copyStr(info.reason, sizeof(info.reason), "bad_photo_url");
-            setErrorOp("photo", str::kNetBadPhotoUrl);
-        } else {
-            info.status = PhotoInfo::Status::Ready;
-            copyStr(info.photo_url, sizeof(info.photo_url), photo_url);
-            copyStr(info.share_url, sizeof(info.share_url), share_url);
-            copyStr(info.expires_at, sizeof(info.expires_at), expires_at);
-            // URL・トークンはログに出さない (spec §9)
-            mclog::tagInfo(kTag, "photo ready (expires {}) after {} ms", static_cast<const char*>(info.expires_at),
-                           now - poll_started_ms);
-        }
+    if (ps == ParseStatus::BadResponse) {
+        // ready なら 3 つとも必須 (protocol.md)。欠けた応答で QR を出さない。
+        mclog::tagWarn(kTag, "photo ready without {}", missing);
+        setErrorOp("photo", str::kNetBadJson);
+    } else if (ps == ParseStatus::BadPhotoUrl) {
+        // 切り詰めた URL の QR は出さない (spec §9「QR を捏造しない」)
+        setErrorOp("photo", str::kNetBadPhotoUrl);
+    } else if (info.status == PhotoInfo::Status::Ready) {
+        // URL・トークンはログに出さない (spec §9)
+        mclog::tagInfo(kTag, "photo ready (expires {}) after {} ms", static_cast<const char*>(info.expires_at),
+                       now - poll_started_ms);
     } else {
-        info.status = PhotoInfo::Status::Error;
-        copyStr(info.reason, sizeof(info.reason), doc["reason"] | "error");
         mclog::tagWarn(kTag, "photo error: {}", static_cast<const char*>(info.reason));
         setErrorOp("photo", info.reason);
     }
@@ -1169,35 +1139,19 @@ void EdgeWorker::sendFrame(const FrameMeta& meta)
         noteFailure("frame", r);  // 撮影中のフレームは 200 以外すべて異常 (unknown_session など)
         return;
     }
-    JsonDocument doc;
-    if (deserializeJson(doc, static_cast<const char*>(json), json_len) != DeserializationError::Ok) {
+    FrameResult fr;
+    const ParseStatus ps = parseFrameResult(static_cast<const char*>(json), json_len, meta.sid, meta.frame_id, fr);
+    if (ps == ParseStatus::BadJson) {
         r.status = kErrBadJson;
         noteFailure("frame", r);
         return;
     }
-    const char* sid         = doc["session_id"] | "";
-    const uint32_t frame_id = doc["frame_id"] | 0UL;
-    if (strcmp(sid, meta.sid) != 0 || frame_id != meta.frame_id) {
+    if (ps != ParseStatus::Ok) {  // Mismatch
         r.status = kErrMismatch;
         noteFailure("frame", r);
         return;
     }
     noteSuccess();
-
-    FrameResult fr;
-    fr.valid             = true;
-    fr.frame_id          = frame_id;
-    fr.dropped           = doc["dropped"] | false;
-    fr.face_count        = clampU8(doc["face_count"] | 0);
-    fr.target_face_count = clampU8(doc["target_face_count"] | 0);
-    fr.all_in_frame      = doc["all_in_frame"] | false;
-    fr.all_eyes_open     = doc["all_eyes_open"] | false;
-    fr.all_smiling       = doc["all_smiling"] | false;
-    fr.servo_dx          = doc["servo_dx"] | 0;
-    fr.servo_dy          = doc["servo_dy"] | 0;
-    fr.hint              = parseHint(doc["hint"] | static_cast<const char*>(nullptr));
-    fr.accepted          = doc["accepted"] | false;
-    fr.latency_ms        = static_cast<uint16_t>(std::min<uint32_t>(doc["latency_ms"] | 0UL, 65535));
 
     ++stats_frames;
     stats_rtt_sum += rtt;
