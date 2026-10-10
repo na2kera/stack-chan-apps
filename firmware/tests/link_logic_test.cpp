@@ -180,6 +180,7 @@ void testLinkState()
 {
     constexpr uint32_t kWindow = 10000;
     link::LinkSnapshot s;
+    s.hello_settled = true;  // 最初の hello の結果が出た後 (出る前は testLinkStateBeforeFirstHello)
     expectState(link::linkState(s, true, 0, kWindow), LinkState::Offline, "never ok");
     s.starting = true;
     expectState(link::linkState(s, true, 0, kWindow), LinkState::Starting, "never ok + starting");
@@ -212,10 +213,66 @@ void testLinkState()
     expectTrue(!link::linkOnline(w, 0xFFFFFF00u + kWindow, kWindow), "wraparound at window");
 }
 
+// net タスクを始めてから最初の hello の結果が出るまでは Starting (クラウドでは cold start + TLS で 2〜10 秒)。
+// その間のタッチで診断画面に入らないように (実機 6b の初回で起きた)。
+void testLinkStateBeforeFirstHello()
+{
+    constexpr uint32_t kWindow = 10000;
+    link::LinkSnapshot s;  // 結果が 1 つも無い
+    expectState(link::linkState(s, true, 0, kWindow), LinkState::Starting, "no hello result yet: starting");
+    expectState(link::linkState(s, true, 60000, kWindow), LinkState::Starting, "no hello result yet: no time limit");
+    expectState(link::linkState(s, false, 0, kWindow), LinkState::Offline, "no hello result yet + no wifi: offline");
+
+    // 最初の hello が確定失敗 (DNS / TCP / TLS / 証明書) → Offline
+    link::LinkSnapshot fail = s;
+    fail.hello_settled = true;
+    fail.starting      = link::startingAfterHello(fail.starting, link::ReplyClass::Unreachable);
+    fail.failures      = 1;
+    expectState(link::linkState(fail, true, 0, kWindow), LinkState::Offline, "first hello unreachable: offline");
+
+    // 最初の hello が接続後の期限切れ・5xx → Starting のまま
+    link::LinkSnapshot slow = s;
+    slow.hello_settled = true;
+    slow.starting      = link::startingAfterHello(slow.starting, link::ReplyClass::Starting);
+    expectState(link::linkState(slow, true, 0, kWindow), LinkState::Starting, "first hello response timeout: starting");
+
+    // 最初の hello が成功 (内部の再送で成功した場合も、1 回目の期限切れは残らない) → Online
+    link::LinkSnapshot ok = s;
+    ok.hello_settled = true;
+    ok.ever_ok       = true;
+    ok.last_ok_ms    = 5000;
+    ok.starting      = link::startingAfterHello(ok.starting, link::ReplyClass::Success);
+    expectState(link::linkState(ok, true, 5000, kWindow), LinkState::Online, "first hello success: online");
+    expectState(link::linkState(ok, true, 5000 + kWindow, kWindow), LinkState::Offline, "after success, window lapses");
+
+    // 打ち切り (アプリを閉じる途中) は結果に数えないので Starting のまま (呼び出し側で hello_settled を立てない)
+    expectTrue(!link::startingAfterHello(false, link::ReplyClass::Aborted), "aborted keeps not starting");
+    expectState(link::linkState(s, true, 0, kWindow), LinkState::Starting, "aborted first hello: still starting");
+}
+
+void testIdleTouch()
+{
+    expectEqual(static_cast<int>(link::idleTouch(LinkState::Online)), static_cast<int>(link::IdleTouch::Start),
+                "online: start");
+    expectEqual(static_cast<int>(link::idleTouch(LinkState::Starting)), static_cast<int>(link::IdleTouch::Ignore),
+                "starting: ignore (no diag, no reservation)");
+    expectEqual(static_cast<int>(link::idleTouch(LinkState::Offline)), static_cast<int>(link::IdleTouch::OpenDiag),
+                "offline: open diag");
+
+    // 起動直後 (最初の hello の結果待ち) のタッチは無視
+    link::LinkSnapshot s;
+    expectEqual(static_cast<int>(link::idleTouch(link::linkState(s, true, 0, 10000))),
+                static_cast<int>(link::IdleTouch::Ignore), "touch before first hello result: ignore");
+    s.hello_settled = true;
+    expectEqual(static_cast<int>(link::idleTouch(link::linkState(s, true, 0, 10000))),
+                static_cast<int>(link::IdleTouch::OpenDiag), "touch after first hello failed: open diag");
+}
+
 void testLatencySensitiveKeepsOnline()
 {
     constexpr uint32_t kWindow = 10000;
     link::LinkSnapshot s;
+    s.hello_settled  = true;
     s.ever_ok        = true;
     s.last_ok_ms     = 1000;
     s.latency_sensitive = true;
@@ -279,6 +336,8 @@ int main()
     testReplyClass();
     testStartingAfterHello();
     testLinkState();
+    testLinkStateBeforeFirstHello();
+    testIdleTouch();
     testLatencySensitiveKeepsOnline();
     testShouldSendHello();
     std::cout << "link_logic_test: ok\n";

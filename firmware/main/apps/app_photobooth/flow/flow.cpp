@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../config.h"
+#include "../net/link_logic.h"
 #include "../view/strings.h"
 #include "time_format.h"
 
@@ -110,7 +111,7 @@ void Flow::begin(uint32_t now_ms, bool camera_ok, bool view_ok)
         return;
     }
     state_ = State::Idle;
-    mclog::tagInfo(kTag, "start in {} (edge {})", stateName(state_), kEdgeEnabled ? "http" : "disabled");
+    mclog::tagInfo(kTag, "start in {} (edge {})", stateName(state_), kEdgeEnabled ? "enabled" : "disabled");
     showIdle();
 }
 
@@ -450,11 +451,18 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
             enter(State::Announce, now_ms);
             return;
         }
-        if (!edge_.isOnline()) {
-            // spec §9: edge 不通なら自動判定つきの撮影は始めず、診断画面を開く。
-            mclog::tagInfo(kTag, "edge offline ({}); open diagnostics", edge_.lastError());
-            enter(State::Diag, now_ms);
-            return;
+        switch (net::link::idleTouch(edge_.linkState())) {
+            case net::link::IdleTouch::Start:
+                break;
+            case net::link::IdleTouch::Ignore:
+                // 最初の hello の結果待ち・cold start (「準備中」)。診断は開かず待機のまま (予約もしない)。
+                mclog::tagInfo(kTag, "edge starting; touch ignored");
+                return;
+            case net::link::IdleTouch::OpenDiag:
+                // spec §9: edge 不通なら自動判定つきの撮影は始めず、診断画面を開く。
+                mclog::tagInfo(kTag, "edge offline ({}); open diagnostics", edge_.lastError());
+                enter(State::Diag, now_ms);
+                return;
         }
         if (!checkCamera(now_ms)) return;
         startSession(now_ms, true);

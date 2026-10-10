@@ -119,7 +119,23 @@ LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32
     if (linkOnline(s, now_ms, window_ms)) {
         return LinkState::Online;
     }
+    if (!s.hello_settled) {
+        return LinkState::Starting;
+    }
     return s.starting ? LinkState::Starting : LinkState::Offline;
+}
+
+IdleTouch idleTouch(LinkState state)
+{
+    switch (state) {
+        case LinkState::Online:
+            return IdleTouch::Start;
+        case LinkState::Starting:
+            return IdleTouch::Ignore;
+        case LinkState::Offline:
+            break;
+    }
+    return IdleTouch::OpenDiag;
 }
 
 bool shouldSendHello(const HelloGate& g)

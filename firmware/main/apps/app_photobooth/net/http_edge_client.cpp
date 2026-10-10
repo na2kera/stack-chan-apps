@@ -333,6 +333,7 @@ struct EdgeWorker {
     std::atomic<bool> ever_ok{false};
     std::atomic<uint8_t> failures{0};  // 連続失敗回数
     std::atomic<bool> starting{false};  // 直近の hello が「準備中」(接続後の応答待ちで期限切れ、または 5xx)
+    std::atomic<bool> hello_settled{false};  // 最初の hello の結果 (打ち切り以外) が出た
     std::atomic<bool> latency_sensitive{false};  // hello を止める段階 (Flow が setLatencySensitive で知らせる)
 
     // ---- begin() で決めて以後は読むだけ ----
@@ -490,6 +491,7 @@ LinkState HttpEdgeClient::linkState()
     snap.failures   = w.failures.load();
     snap.last_ok_ms = w.last_ok_ms.load();  // now より先に読む (EdgeWorker::online() と同じ理由)
     snap.starting   = w.starting.load();
+    snap.hello_settled = w.hello_settled.load();
     snap.latency_sensitive = w.latency_sensitive.load();
     return link::linkState(snap, wifiUp(), nowMs(), kOnlineWindowMs);
 }
@@ -1224,6 +1226,9 @@ void EdgeWorker::sendHello()
     const bool was_starting    = starting.load();
     const bool now_starting    = link::startingAfterHello(was_starting, cls);
     starting.store(now_starting);
+    if (cls != link::ReplyClass::Aborted && !hello_settled.exchange(true)) {
+        mclog::tagInfo(kTag, "first hello settled (status {}, {} ms)", r.status, rtt);
+    }
     if (cls != link::ReplyClass::Aborted) {
         ++stats_hello;
         stats_hello_rtt_sum += rtt;
@@ -1794,6 +1799,14 @@ void EdgeWorker::noteResponse(const char* op, const Reply& r)
 
 void EdgeWorker::noteSuccess()
 {
+    {
+        // DIAG の「再接続」で置いた「再接続中」は成功で消す。それ以外は「最後の通信エラー」として残す
+        // (edge_client.h の lastError())。
+        std::lock_guard<std::mutex> lock(mutex);
+        if (strcmp(last_error, str::kNetReconnecting) == 0) {
+            last_error[0] = '\0';
+        }
+    }
     last_ok_ms.store(nowMs());
     ever_ok.store(true);
     starting.store(false);

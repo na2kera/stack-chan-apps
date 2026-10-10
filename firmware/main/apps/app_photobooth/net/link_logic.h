@@ -98,6 +98,7 @@ struct LinkSnapshot {
     uint8_t failures    = 0;      // 連続失敗回数
     uint32_t last_ok_ms = 0;      // 最後に 2xx を受けた時刻
     bool starting       = false;  // 直近の hello が「準備中」
+    bool hello_settled  = false;  // 最初の hello の結果 (打ち切り以外) が出た。出るまでは Starting
     bool latency_sensitive = false;  // hello が後続の依頼を妨げる段階 (定期 hello を止めている)
 };
 
@@ -106,8 +107,18 @@ struct LinkSnapshot {
 // frame などの結果 (連続失敗) だけで決める (REVIEW で迷っている間に online が切れて「撮り直す」が
 // 失敗しないように)。写真の準備が終わった後 (QR 表示中) は hello を再開し、時間の窓に戻る。
 bool linkOnline(const LinkSnapshot& s, uint32_t now_ms, uint32_t window_ms);
-// 待機画面の 3 状態。Wi-Fi が無ければ Offline。
+// 待機画面の 3 状態。Wi-Fi が無ければ Offline。net タスクを始めてから最初の hello の結果が出るまで
+// (hello_settled でない間。クラウドでは cold start + TLS で 2〜10 秒) は Starting。
 LinkState linkState(const LinkSnapshot& s, bool wifi_up, uint32_t now_ms, uint32_t window_ms);
+
+// 待機中のタッチ (画面・頭部) をどう扱うか。
+enum class IdleTouch : uint8_t {
+    Start,     // 判定つきの撮影を始める (Online)
+    Ignore,    // 何もしない (Starting: 最初の hello の結果待ち・cold start。予約もしない)
+    OpenDiag,  // 診断画面を開く (Offline: DNS / TCP / TLS / 証明書などで繋がらない)
+};
+
+IdleTouch idleTouch(LinkState state);
 
 // ---- 定期 hello ----
 
