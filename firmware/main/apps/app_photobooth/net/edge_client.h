@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-// edge (PC) との通信の抽象インターフェース (docs/design/fw-app-step2.md §3)。
+// edge との通信の抽象インターフェース (docs/design/fw-app-step2.md §3)。
 // 独立ファーム版 device/src/edge/edge_client.h の最終形の移植。イベント名は docs/spec.md §8、
 // HTTP の契約は docs/protocol.md と一致させる。
 //
@@ -69,11 +69,7 @@ using JpegBytes = std::vector<uint8_t, PsramAllocator<uint8_t>>;
 // frame の X-Phase。
 enum class Phase : uint8_t { Compose, Capture };
 
-// 待機画面に出す接続状態。
-enum class LinkState : uint8_t {
-    Offline,  // 「PC未接続」(edge 無効ビルドもこれ)
-    Online,   // 「PC接続中」
-};
+// 待機画面に出す接続状態 LinkState は edge_types.h (ロジック層と共有)。
 
 // 診断画面 (DIAG) に出す接続状態。鍵は含めない。
 struct Diagnostics {
@@ -84,8 +80,7 @@ struct Diagnostics {
     char ssid[33]       = {};
     char ip[16]         = {};
     int rssi            = 0;  // dBm。wifi == Connected のときだけ有効
-    char edge_host[64]  = {};
-    uint16_t edge_port  = 0;
+    char edge_url[96]   = {};  // "scheme://host:port" (path と鍵は含めない)。書式が不正なら ""
     char last_error[96] = {};
 };
 

@@ -463,13 +463,16 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
         return;
     }
 
-    // 右下の接続表示 (「PC接続中」/「PC未接続」)。変わったときだけ差し替える。
+    // 右下の接続表示 (「接続中」/「準備中…」/「接続できません」)。変わったときだけ差し替える。
     if (now_ms - idle_link_checked_ms_ >= kIdleLinkPollMs) {
         idle_link_checked_ms_     = now_ms;
         const view::IdleLink link = idleLink();
         if (link != idle_link_drawn_) {
             idle_link_drawn_ = link;
-            mclog::tagInfo(kTag, "idle: edge {}", link == view::IdleLink::Online ? "online" : "offline");
+            mclog::tagInfo(kTag, "idle: edge {}",
+                           link == view::IdleLink::Online     ? "online"
+                           : link == view::IdleLink::Starting ? "starting"
+                                                              : "offline");
             view_.updateIdleStatus(link);
         }
     }
@@ -477,7 +480,15 @@ void Flow::updateIdle(const shared::hw::Event& ev, uint32_t now_ms)
 
 view::IdleLink Flow::idleLink() const
 {
-    return edge_.linkState() == net::LinkState::Online ? view::IdleLink::Online : view::IdleLink::Offline;
+    switch (edge_.linkState()) {
+        case net::LinkState::Online:
+            return view::IdleLink::Online;
+        case net::LinkState::Starting:
+            return view::IdleLink::Starting;
+        case net::LinkState::Offline:
+            break;
+    }
+    return view::IdleLink::Offline;
 }
 
 void Flow::showIdle()
@@ -1116,9 +1127,9 @@ void Flow::buildDiag(char* out, size_t len)
         snprintf(line_wifi, sizeof(line_wifi), "%s: %s", str::kDiagWifiLabel, wifi);
         snprintf(line_ip, sizeof(line_ip), "IP: -");
     }
-    // 接続先 (host:port) は鍵ではないので画面には出す (PC の IP が DHCP で変わったことに気づけるように)。
-    snprintf(out, len, "%s\n%s\n%s: %s:%u\n%s: %s\n%s: %s", line_wifi, line_ip, str::kDiagPcLabel, d.edge_host,
-             static_cast<unsigned>(d.edge_port), str::kDiagReplyLabel, d.online ? str::kDiagReplyYes : str::kDiagReplyNo,
+    // 接続先 (scheme://host:port) は鍵ではないので画面には出す (PC の IP が DHCP で変わったことに気づけるように)。
+    snprintf(out, len, "%s\n%s\n%s: %s\n%s: %s\n%s: %s", line_wifi, line_ip, str::kDiagPcLabel,
+             d.edge_url[0] ? d.edge_url : "-", str::kDiagReplyLabel, d.online ? str::kDiagReplyYes : str::kDiagReplyNo,
              str::kDiagErrorLabel, d.last_error[0] ? d.last_error : str::kDiagNone);
 }
 

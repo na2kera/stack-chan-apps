@@ -44,7 +44,15 @@ constexpr Rect kIdleWarning{8, kIdleStatusY, kScreenW - 16 - kIdleLinkW - 4, 24}
 
 const char* idleLinkText(IdleLink link)
 {
-    return link == IdleLink::Online ? str::kPcOnline : str::kPcOffline;
+    switch (link) {
+        case IdleLink::Online:
+            return str::kLinkOnline;
+        case IdleLink::Starting:
+            return str::kLinkStarting;
+        case IdleLink::Offline:
+            break;
+    }
+    return str::kLinkOffline;
 }
 
 }  // namespace
@@ -205,7 +213,7 @@ void View::showIdle(IdleLink link, const char* warning)
     const Rect touch{8, prompt.y + prompt.h + 4, kScreenW - 16, 28};
     textBox(*page_, page_->root(), touch, str::kIdleTouchStart, font::body(), color::muted(), Align::Center);
 
-    // ボタン帯のすぐ上の 1 行: 左に警告、右に PC 接続状態 (独立ファーム版は画面下端に置いていた)。
+    // ボタン帯のすぐ上の 1 行: 左に警告、右に edge との接続状態 (独立ファーム版は画面下端に置いていた)。
     if (warning != nullptr) {
         textBox(*page_, page_->root(), kIdleWarning, warning, font::body(), color::warn(), Align::Left);
     }

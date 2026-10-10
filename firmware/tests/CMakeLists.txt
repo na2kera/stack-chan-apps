@@ -131,3 +131,31 @@ target_include_directories(time_format_test PRIVATE
 target_compile_features(time_format_test PRIVATE cxx_std_17)
 
 add_test(NAME time_format_test COMMAND $<TARGET_FILE:time_format_test>)
+
+# app_photobooth の net/edge_url (EDGE_BASE_URL の分解)
+add_executable(edge_url_test
+    edge_url_test.cpp
+    ../main/apps/app_photobooth/net/edge_url.cpp
+)
+
+target_include_directories(edge_url_test PRIVATE
+    ../main
+)
+
+target_compile_features(edge_url_test PRIVATE cxx_std_17)
+
+add_test(NAME edge_url_test COMMAND $<TARGET_FILE:edge_url_test>)
+
+# app_photobooth の net/link_logic (接続の失敗の分類、タイムアウト表、接続状態)
+add_executable(link_logic_test
+    link_logic_test.cpp
+    ../main/apps/app_photobooth/net/link_logic.cpp
+)
+
+target_include_directories(link_logic_test PRIVATE
+    ../main
+)
+
+target_compile_features(link_logic_test PRIVATE cxx_std_17)
+
+add_test(NAME link_logic_test COMMAND $<TARGET_FILE:link_logic_test>)

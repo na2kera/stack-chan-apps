@@ -3,13 +3,20 @@
  *
  * SPDX-License-Identifier: MIT
  */
-// edge の応答を表す型 (frame_result / photo_ready)。edge_client.h から分けた。
+// edge の応答を表す型 (frame_result / photo_ready) と接続状態。edge_client.h から分けた。
 // edge_parse (応答の解釈) とホストテストからも使うので、型だけを置き、ESP-IDF のヘッダを含めない。
 #pragma once
 
 #include <cstdint>
 
 namespace photobooth::net {
+
+// 待機画面に出す接続状態 (docs/design/step6-cloud-device.md §3.2「UI の状態」)。
+enum class LinkState : uint8_t {
+    Offline,   // 「接続できません」(edge 無効ビルド・Wi-Fi なし・DNS / TCP / TLS / 証明書の失敗・401 もこれ)
+    Starting,  // 「準備中…」: 接続は成立したが hello の応答待ちで期限切れ、または 5xx (cold start など)
+    Online,    // 「接続中」: 直近に 2xx
+};
 
 // frame_result の hint (protocol.md)。
 enum class Hint : uint8_t { None, Closer, TooMany };

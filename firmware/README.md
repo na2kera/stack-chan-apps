@@ -40,6 +40,8 @@ ctest --test-dir build-host-tests --output-on-failure
 | `edge_parse_test` | `app_photobooth/net/edge_parse` (edge の応答の解釈) |
 | `head_logic_test` | `app_photobooth/hw/head_logic` (首の応答監視。サーボは偽物) |
 | `time_format_test` | `app_photobooth/flow/time_format` (写真の期限の表示) |
+| `edge_url_test` | `app_photobooth/net/edge_url` (`EDGE_BASE_URL` の分解) |
+| `link_logic_test` | `app_photobooth/net/link_logic` (接続の失敗の分類・タイムアウト表・接続状態) |
 
 - `edge_parse_test` は ArduinoJson を使う。`components/ArduinoJson` (`fetch_repos.py` が取る) があればそれを、
   無ければ CMake の `FetchContent` で `repos.json` と同じ v7.4.2 を取る (初回はネットワークが要る)。
@@ -86,16 +88,16 @@ upstream との差分は次だけにしている。
   `git -C xiaozhi-esp32 checkout -- .` で戻してから `python3 ./fetch_repos.py` を実行し直す。
   当たっているかは `grep -n "photobooth fork" xiaozhi-esp32/main/application.cc` で確認できる。
 
-### edge (PC) と繋ぐ
+### edge と繋ぐ
 
-アプリは同じ LAN の PC で動く `edge` に HTTP でフレームを送り、顔判定・首振り量・写真の保存を任せる
-(通信契約は親リポジトリの `docs/protocol.md`)。Wi-Fi は純正の設定 (NVS) をそのまま使うので、
+アプリは `edge` (同じ LAN の PC、またはクラウド) に HTTP / HTTPS でフレームを送り、顔判定・首振り量・写真の保存を任せる
+(通信契約は親リポジトリの `docs/protocol.md`)。接続先は `config_local.h` の `EDGE_BASE_URL` 1 つで決まる。Wi-Fi は純正の設定 (NVS) をそのまま使うので、
 SSID / パスワードはコードに書かない。
 
 1. **Wi-Fi**: 純正の SETUP で Wi-Fi を設定しておく (AI エージェントや App Center が繋がる状態)。2.4 GHz のみ。
    アプリを開くと、純正の App Center と同じく `GetHAL().startNetwork()` を呼んで接続を待つ
    (その間は「Wi-Fi接続中」の画面。繋がると待機画面へ進む)。アプリを閉じても Wi-Fi は切らない。
-   - Wi-Fi が未設定 (NVS に SSID が無い) のときは `startNetwork()` を呼ばず、すぐ待機画面 (「PC未接続」) になる。
+   - Wi-Fi が未設定 (NVS に SSID が無い) のときは `startNetwork()` を呼ばず、すぐ待機画面 (「接続できません」) になる。
      診断画面には「未設定」と出る。SETUP で設定してからアプリを開き直す。
    - SSID は保存されているが繋がらない (圏外・パスワード違い) ときは**純正の動作**になる: 約 60 秒後に
      Wi-Fi 設定モード (AP) に入り、繋がるまで「Wi-Fi接続中」の画面から進まない。App Center を開いたときと同じ。
@@ -107,9 +109,24 @@ SSID / パスワードはコードに書かない。
 
    | 項目 | 値 |
    | --- | --- |
-   | `EDGE_HOST` | edge を動かす PC の LAN アドレス (IP で書く)。Mac なら `ipconfig getifaddr en0` |
-   | `EDGE_PORT` | edge の待ち受けポート (既定 8765) |
+   | `EDGE_BASE_URL` | edge の URL。`scheme://host[:port][/]` (path・query・userinfo は書けない)。LAN の PC なら `"http://<PC の IP>:8765"` (IP で書く。Mac なら `ipconfig getifaddr en0`)、クラウドなら `"https://stackchan-edge.<account>.workers.dev"` (https はホスト名で書く。IP は不可) |
    | `DEVICE_ID` / `EDGE_SHARED_KEY` | edge の `config.toml` の `[auth] device_id` / `device_key` (または環境変数 `EDGE_DEVICE_KEY`) と同じ値 |
+
+   **旧形式からの移行**: 以前の `EDGE_HOST` / `EDGE_PORT` は使えない (旧形式のままビルドすると
+   `config_local.h: EDGE_HOST/EDGE_PORT は EDGE_BASE_URL に変わりました` でビルドが止まる)。
+   `EDGE_HOST = "192.168.0.167"`、`EDGE_PORT = 8765` だったなら、2 行を消して次の 1 行に置き換える。
+
+   ```cpp
+   constexpr const char* EDGE_BASE_URL = "http://192.168.0.167:8765";  // http://<旧 EDGE_HOST>:<旧 EDGE_PORT>
+   ```
+
+   `config_local.h` の値は `namespace photobooth::config { ... }` の中の `constexpr` か `#define` で書く
+   (グローバル名前空間の `constexpr` は受け付けない)。書式が不正だと待機画面が「接続できません」、診断画面に
+   「接続先の書式が不正」と出る。
+
+   https のときは証明書を常に検証する (ESP-IDF の証明書バンドル。`sdkconfig.defaults` の
+   `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`)。システム時刻が 2025 年より前なら、最初の `hello` の前に SNTP の同期を
+   最大 5 秒待つ。
 
 3. **edge を LAN 向けに起動する**: `127.0.0.1` で listen すると K151 から届かない。
 
@@ -120,21 +137,40 @@ SSID / パスワードはコードに書かない。
 
    macOS のファイアウォールが有効なら、Python への受信を許可する。RGB565 のバイト順は edge 設定の
    `rgb565_byte_order = "little"` (アプリはカメラ層の RGB565 リトルエンディアンをそのまま送る)。
-4. `idf.py build` して書き込み、ランチャーから Photobooth を開く。待機画面の右下が「PC接続中」になれば繋がっている。
-   「PC未接続」のまま画面をタッチすると診断画面が開き、Wi-Fi の状態 / IP / 接続先 `host:port` / PC の応答 /
+4. `idf.py build` して書き込み、ランチャーから Photobooth を開く。待機画面の右下が「接続中」になれば繋がっている。
+   「準備中…」は接続はできたが edge の応答待ち (cloud の cold start など。5 秒ごとの `hello` で再試行する)。
+   「接続できません」のまま画面をタッチすると診断画面が開き、Wi-Fi の状態 / IP / 接続先 `scheme://host:port` / 応答 /
    最後のエラーが読める。「再接続」で edge との接続を作り直してすぐ `hello` を送り、「判定なしで撮影」で edge なしの
    撮影 (保存はできない) を試せる。頭をタッチすると待機画面に戻る。
-   - PC の IP は DHCP で変わることがある。「PCに接続できません」のときは `ipconfig getifaddr en0` と
-     診断画面の「PC」の行を見比べ、違っていたら `config_local.h` を直して書き込み直す。
+   - PC の IP は DHCP で変わることがある。「接続できません」のときは `ipconfig getifaddr en0` と
+     診断画面の「接続先」の行を見比べ、違っていたら `config_local.h` を直して書き込み直す。
+   - 診断画面の「エラー」: 「DNS失敗」(ホスト名を引けない)、「接続できません」(TCP で繋がらない)、
+     「証明書エラー」(証明書を検証できない)、「時刻未同期」(本体の時刻が不正で証明書の期限を検査できない)、
+     「TLS接続失敗」(その他の TLS の失敗)、「準備中 (応答待ち)」(接続後に `hello` の応答が 8 秒以内に来ない)。
    - 「認証エラー(IDか鍵が違う)」は `DEVICE_ID` / `EDGE_SHARED_KEY` と edge 側の不一致 (HTTP 401)。
    - シリアルログの `PB-Edge: send N frames ... (x.x fps), rtt avg ...` (5 秒ごと) で送信 fps と往復時間が分かる。
+     5 秒ごとに `PB-Edge: hello N (ok N, starting N) rtt avg ... max ... ms, link ..., stack free ...` も出る。
      鍵・URL・トークン・画像はログに出さない。
+
+**HTTPS を quick tunnel で試す** (クラウドの edge を立てずに、PC の edge を HTTPS で公開する): Cloudflare Tunnel の
+quick tunnel は無料・アカウント不要で、`*.trycloudflare.com` の正規の証明書が付く。
+
+```bash
+brew install cloudflared
+cd edge && EDGE_DEVICE_KEY=<config_local.h と同じ鍵> uv run edge          # 127.0.0.1:8765 のままでよい
+cloudflared tunnel --url http://localhost:8765                             # 別のターミナルで
+```
+
+`cloudflared` が表示する `https://<ランダム>.trycloudflare.com` を `EDGE_BASE_URL` に書いて書き込む。
+URL は起動ごとに変わり、SLA も無いので開発の確認専用 (本番の設定値には使わない)。`~/.cloudflared/config.yaml`
+があると quick tunnel は起動しない。確かめられるのは端末 → Cloudflare の TLS (証明書・DNS・SNI) と持続接続までで、
+クラウドの edge (Worker・コンテナ・cold start) の挙動は確かめられない。
 
 **edge なしでビルドする**: `config_local.h` が無い、または `idf.py -DPHOTOBOOTH_NO_EDGE=1 build` でビルドすると、
 Wi-Fi に繋がず、ステップ1 と同じ単体動作 (QR は `config.h` の固定 URL) になる。`-DPHOTOBOOTH_NO_EDGE` は
 CMake のキャッシュに残るので、戻すときは `idf.py -DPHOTOBOOTH_NO_EDGE=0 build`。
 
-**今後の提案 (未実装)**: `EDGE_HOST` を `.local` 名 (mDNS) で書けるようにすれば PC の IP が変わっても
+**今後の提案 (未実装)**: `EDGE_BASE_URL` の host を `.local` 名 (mDNS) で書けるようにすれば PC の IP が変わっても
 書き込み直さずに済む。純正ファームには mDNS が入っていないので、`espressif/mdns` (component manager) の
 追加が要る。依存を増やす変更なので、入れるかどうかは別途決める。
 
