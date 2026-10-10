@@ -23,6 +23,28 @@
 #define PHOTOBOOTH_EDGE_ENABLED 0
 #endif
 
+// frame を JPEG にして送るか (docs/design/step6-cloud-device.md §3.3)。既定は JPEG。
+//   - `idf.py -DPHOTOBOOTH_FRAME_RGB565=1 build` で RGB565 のまま送る (6b までと同じ)。
+//     戻すときは `idf.py -DPHOTOBOOTH_FRAME_RGB565=0 build` (CMake のキャッシュに残るため)。
+//   - CMake 変数は firmware/main/CMakeLists.txt がコンパイル定義に渡す。
+#if defined(PHOTOBOOTH_FRAME_RGB565) && PHOTOBOOTH_FRAME_RGB565
+#define PHOTOBOOTH_FRAME_FORMAT_JPEG 0
+#else
+#define PHOTOBOOTH_FRAME_FORMAT_JPEG 1
+#endif
+
+// 試験用フック。`idf.py -DPHOTOBOOTH_TEST_HOOKS=1 ...` のときだけ有効 (製品ファームでは 0)。
+#ifndef PHOTOBOOTH_TEST_HOOKS
+#define PHOTOBOOTH_TEST_HOOKS 0
+#endif
+
+// 試験 22 (符号化失敗の注入) のデバッグ定義。`idf.py -DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=N build`
+// で、N 回に 1 回符号化を失敗扱いにする (エンコーダを呼ばずに、確保失敗と同じ経路で破棄する)。0 (既定) で無効。
+// PHOTOBOOTH_TEST_HOOKS なしでは使えない (CMake と下の static_assert で止める)。
+#ifndef PHOTOBOOTH_JPEG_FAIL_EVERY
+#define PHOTOBOOTH_JPEG_FAIL_EVERY 0
+#endif
+
 namespace photobooth::config {
 
 // ---- 撮影フロー ----
@@ -51,6 +73,14 @@ constexpr uint32_t HELLO_INTERVAL_MS = 5000;   // 通信が無いときの hello
 constexpr uint32_t STARTING_TOUCH_IGNORE_MS = 20000;
 constexpr uint32_t UPLOAD_WAIT_MS    = 15000;  // UPLOADING で写真の準備を待つ上限
 constexpr uint8_t UPLOAD_RETRY       = 3;      // 保存 (review save) の送信回数の上限 (session ごと)
+
+// ---- frame の形式 (docs/design/step6-cloud-device.md §3.3) ----
+constexpr bool FRAME_FORMAT_JPEG       = PHOTOBOOTH_FRAME_FORMAT_JPEG != 0;  // false なら RGB565 LE のまま
+constexpr uint8_t FRAME_JPEG_QUALITY   = 80;  // edge の候補 JPEG と同じ。サイズの上限は設けない
+constexpr uint32_t JPEG_FAIL_EVERY     = PHOTOBOOTH_JPEG_FAIL_EVERY;  // 0 = 注入しない (デバッグ用)
+constexpr bool TEST_HOOKS              = PHOTOBOOTH_TEST_HOOKS != 0;
+static_assert(JPEG_FAIL_EVERY == 0 || TEST_HOOKS,
+              "PHOTOBOOTH_JPEG_FAIL_EVERY は試験用。PHOTOBOOTH_TEST_HOOKS=1 のときだけ使える");
 
 // ---- 首振り (単位: 純正 Motion と同じ 1/10 度。250 = 25°) ----
 // X = yaw (左右)、Y = pitch (純正の home = 0 が下向き、値が大きいほど上向き)。

@@ -10,7 +10,7 @@
 - **1 フレーム 1 リクエスト**: device は前のフレームの応答を受けてから次を送る。edge は同じセッションのフレームを到着順に 1 枚ずつ処理する。`frame_id` が処理済みより古いものは処理せず `dropped: true` を返す。
 - **認証**: 全リクエストに `X-Device-Id` と `X-Device-Key`（共有鍵）。不一致は 401。鍵は device の `config.h` と edge の `config.toml` / 環境変数にだけ置く。
 - **時計**: `capture_ms` は device の単調時計（セッション開始からの ms）。edge の壁時計は写真の有効期限にだけ使う。
-- **フレーム形式**: `X-Format: rgb565`（QVGA、esp_camera の出力バイト列そのまま）を初期値とする。edge は `jpeg` も受け付ける。RGB565 のバイト順は edge 設定 `rgb565_byte_order`（`little` / `big`）で切り替え、実機で確認する。
+- **フレーム形式**: `X-Format: rgb565`（QVGA、esp_camera の出力バイト列そのまま）を初期値とする。edge は `jpeg` も受け付ける。K151 のファームは 6c から既定で `jpeg`（品質 80、`X-Width` / `X-Height` は元の 320 / 240。`docs/design/step6-cloud-device.md` §3.3）を送り、`-DPHOTOBOOTH_FRAME_RGB565=1` でビルドすると `rgb565`。RGB565 のバイト順は edge 設定 `rgb565_byte_order`（`little` / `big`）で切り替え、実機で確認する。
 
 ## エンドポイント
 

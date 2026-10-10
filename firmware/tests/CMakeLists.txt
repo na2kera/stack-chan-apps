@@ -160,6 +160,20 @@ target_compile_features(link_logic_test PRIVATE cxx_std_17)
 
 add_test(NAME link_logic_test COMMAND $<TARGET_FILE:link_logic_test>)
 
+# app_photobooth の net/frame_stats (frame の形式の選択、符号化失敗の注入、送信統計の集計)
+add_executable(frame_stats_test
+    frame_stats_test.cpp
+    ../main/apps/app_photobooth/net/frame_stats.cpp
+)
+
+target_include_directories(frame_stats_test PRIVATE
+    ../main
+)
+
+target_compile_features(frame_stats_test PRIVATE cxx_std_17)
+
+add_test(NAME frame_stats_test COMMAND $<TARGET_FILE:frame_stats_test>)
+
 # app_photobooth の net/edge_config.h (config_local.h の書き方の受け付けと旧形式の検出)。
 # フィクスチャごとに config.h / net/edge_config.h / config_local.h を並べたディレクトリを作ってコンパイルする。
 set(PB_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/apps/app_photobooth)
@@ -202,3 +216,15 @@ foreach(pair "old_namespace|EDGE_HOST/EDGE_PORT" "old_global|EDGE_HOST/EDGE_PORT
                      ${CMAKE_CURRENT_SOURCE_DIR}/edge_config_test.cpp)
     set_tests_properties(edge_config_rejects_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expected}")
 endforeach()
+
+# app_photobooth の config.h: 失敗注入 (PHOTOBOOTH_JPEG_FAIL_EVERY) は PHOTOBOOTH_TEST_HOOKS なしでは static_assert で止まる
+add_test(NAME config_rejects_fail_injection_without_test_hooks
+         COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 -fsyntax-only ${EDGE_CONFIG_SYSROOT_ARGS}
+                 -I${CMAKE_CURRENT_SOURCE_DIR}/../main -DPHOTOBOOTH_JPEG_FAIL_EVERY=3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/frame_stats_test.cpp)
+set_tests_properties(config_rejects_fail_injection_without_test_hooks PROPERTIES
+                     PASS_REGULAR_EXPRESSION "PHOTOBOOTH_TEST_HOOKS=1")
+add_test(NAME config_accepts_fail_injection_with_test_hooks
+         COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 -fsyntax-only ${EDGE_CONFIG_SYSROOT_ARGS}
+                 -I${CMAKE_CURRENT_SOURCE_DIR}/../main -DPHOTOBOOTH_TEST_HOOKS=1 -DPHOTOBOOTH_JPEG_FAIL_EVERY=3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/frame_stats_test.cpp)

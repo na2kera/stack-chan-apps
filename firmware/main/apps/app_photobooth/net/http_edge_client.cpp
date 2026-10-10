@@ -41,6 +41,7 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <mutex>
@@ -51,6 +52,8 @@ std::unique_ptr<EdgeClient> createEdgeClient()
 #include "edge_config.h"
 #include "edge_parse.h"
 #include "edge_url.h"
+#include "frame_jpeg.h"
+#include "frame_stats.h"
 #include "link_logic.h"
 #include "network.h"
 
@@ -89,6 +92,9 @@ constexpr size_t kReadChunk             = 4096;  // 応答本文を読む単位 
 
 // QVGA RGB565 1 枚分。これより大きいフレームは offerFrame() で断る。
 constexpr size_t kSlotBytes = 320 * 240 * 2;
+
+// 送る形式 (docs/design/step6-cloud-device.md §3.3)。切り替えは config.h の FRAME_FORMAT_JPEG。
+const frame::Format kFrameFormat = frame::selectFormat(config::FRAME_FORMAT_JPEG);
 
 // 通信の失敗を表す負の status (HTTP の status は正)。
 constexpr int kErrNoWifi       = -100;
@@ -269,6 +275,7 @@ struct EdgeWorker {
     bool takeFrame(FrameMeta& meta);
     void dropPendingFrame();
     void sendFrame(const FrameMeta& meta);
+    bool encodeJpeg(const FrameMeta& meta, uint8_t*& out, size_t& out_len);
     void sendHello();
     void pollPhoto(uint32_t now);
     void publishPhoto(uint32_t gen, const PhotoInfo& info);
@@ -359,14 +366,11 @@ struct EdgeWorker {
     // save を送った回数 (session_id ごと、合計 UPLOAD_RETRY 回まで)
     char save_sid[37]  = {};
     uint8_t save_sends = 0;
-    // 送信 fps と往復時間 (logStats で出してリセット)
+    // 送信 fps・往復時間・JPEG の符号化 (logStats で出してリセット)
     uint32_t stats_since_ms = 0;
-    uint32_t stats_frames   = 0;
-    uint32_t stats_failures = 0;
-    uint32_t stats_skipped  = 0;  // offline で送らずに捨てたフレーム
-    uint32_t stats_rtt_sum  = 0;
-    uint32_t stats_rtt_max  = 0;
-    uint32_t stats_edge_sum = 0;
+    uint32_t stats_failures = 0;  // 全リクエストの失敗 (frame 以外も含む)
+    frame::Stats frame_stats;     // frame の送信と符号化
+    uint32_t encode_seq = 0;      // 符号化を試みた通し番号 (失敗の注入用)
     // hello の統計 (同上)。rtt は再送を含めた 1 回の hello の時間
     uint32_t stats_hello          = 0;
     uint32_t stats_hello_ok       = 0;
@@ -450,6 +454,9 @@ bool HttpEdgeClient::begin()
     // 接続先はログに出さない (URL を出さない方針)。scheme とポートだけ出す。
     mclog::tagInfo(kTag, "net task started (stack {}, {} port {})", kTaskStack, pu.url.https ? "https" : "http",
                    static_cast<unsigned>(pu.url.port));
+    if (config::JPEG_FAIL_EVERY != 0) {
+        mclog::tagWarn(kTag, "JPEG fail injection every {} (TEST BUILD)", config::JPEG_FAIL_EVERY);
+    }
     return true;
 }
 
@@ -919,7 +926,7 @@ void EdgeWorker::run()
                 sendFrame(meta);
                 worked = true;
             } else {
-                ++stats_skipped;
+                frame_stats.addSkipped();
             }
         }
 
@@ -1281,21 +1288,59 @@ void EdgeWorker::sendFrame(const FrameMeta& meta)
     snprintf(v_sy, sizeof(v_sy), "%d", meta.servo_y);
     snprintf(v_w, sizeof(v_w), "%u", static_cast<unsigned>(meta.width));
     snprintf(v_h, sizeof(v_h), "%u", static_cast<unsigned>(meta.height));
-    // kFrameHeaders と同じ並び。X-Format は rgb565 (カメラ層の RGB565 LE をそのまま。edge は little)。
+    // kFrameHeaders と同じ並び。X-Format は jpeg か rgb565 (カメラ層の RGB565 LE をそのまま。edge は little)。
+    // X-Width / X-Height は JPEG でも元の寸法 (320 / 240)。edge は実 JPEG の寸法と照合する。
     const Header headers[] = {
-        {"X-Frame-Id", v_id}, {"X-Capture-Ms", v_ms}, {"X-Servo-X", v_sx},     {"X-Servo-Y", v_sy},
-        {"X-Width", v_w},     {"X-Height", v_h},      {"X-Format", "rgb565"}, {"X-Phase", phaseName(meta.phase)},
+        {"X-Frame-Id", v_id},
+        {"X-Capture-Ms", v_ms},
+        {"X-Servo-X", v_sx},
+        {"X-Servo-Y", v_sy},
+        {"X-Width", v_w},
+        {"X-Height", v_h},
+        {"X-Format", frame::formatHeader(kFrameFormat)},
+        {"X-Phase", phaseName(meta.phase)},
     };
     static_assert(sizeof(headers) / sizeof(headers[0]) == sizeof(kFrameHeaders) / sizeof(kFrameHeaders[0]),
                   "frame header list mismatch");
 
+    // JPEG の出力バッファ。image_to_jpeg() が malloc で確保したものを、送信が終わるまでこの関数が所有し、
+    // 抜けるときに free() する (別のバッファへはコピーしない。§3.3)。
+    struct MallocBuf {
+        uint8_t* p = nullptr;
+        size_t n   = 0;
+        MallocBuf() = default;
+        MallocBuf(const MallocBuf&) = delete;
+        MallocBuf& operator=(const MallocBuf&) = delete;
+        ~MallocBuf()
+        {
+            free(p);
+        }
+    } jpeg;
+
     Request rq;
     rq.method        = HTTP_METHOD_POST;
     rq.path          = path;
-    rq.content_type  = "application/octet-stream";
-    rq.body          = slot[send_idx];
-    rq.body_len      = meta.len;
     rq.frame_headers = headers;
+    // 形式は X-Format で伝える (edge は Content-Type を見ない。疑似デバイスと同じ値)
+    rq.content_type  = "application/octet-stream";
+    if (kFrameFormat == frame::Format::Jpeg) {
+        if (!encodeJpeg(meta, jpeg.p, jpeg.n)) {
+            return;  // 破棄 (RGB565 に落とさない)。回数は logStats() にまとめて出す
+        }
+        rq.body     = jpeg.p;
+        rq.body_len = jpeg.n;  // Content-Length は返ってきた長さ
+    } else {
+        rq.body     = slot[send_idx];
+        rq.body_len = meta.len;
+    }
+
+    // 送ったが失敗したフレームを数える (アプリを閉じる途中の打ち切りは数えない。noteFailure と同じ)
+    auto fail = [this](const Reply& r) {
+        if (r.status != kErrAborted) {
+            frame_stats.addSendFailure();
+        }
+        noteFailure("frame", r);
+    };
 
     const uint32_t t0 = nowMs();
     // 失敗しても同じフレームは再送しない (protocol.md)。次のフレームを送る。
@@ -1304,31 +1349,28 @@ void EdgeWorker::sendFrame(const FrameMeta& meta)
     requested_once  = true;
     const uint32_t rtt = last_request_ms - t0;
     if (r.status < 0) {
-        noteFailure("frame", r);
+        fail(r);
         return;
     }
     if (r.status != 200) {
-        noteFailure("frame", r);  // 撮影中のフレームは 200 以外すべて異常 (unknown_session など)
+        fail(r);  // 撮影中のフレームは 200 以外すべて異常 (unknown_session など)
         return;
     }
     FrameResult fr;
     const ParseStatus ps = parseFrameResult(static_cast<const char*>(json), json_len, meta.sid, meta.frame_id, fr);
     if (ps == ParseStatus::BadJson) {
         r.status = kErrBadJson;
-        noteFailure("frame", r);
+        fail(r);
         return;
     }
     if (ps != ParseStatus::Ok) {  // Mismatch
         r.status = kErrMismatch;
-        noteFailure("frame", r);
+        fail(r);
         return;
     }
     noteSuccess();
 
-    ++stats_frames;
-    stats_rtt_sum += rtt;
-    stats_rtt_max = std::max(stats_rtt_max, rtt);
-    stats_edge_sum += fr.latency_ms;
+    frame_stats.addSent(rtt, fr.latency_ms);
     mclog::tagDebug(kTag, "frame {} {}: faces {}/{} servo ({},{}) acc={} rtt {} ms edge {} ms", fr.frame_id,
                     phaseName(meta.phase), static_cast<unsigned>(fr.face_count),
                     static_cast<unsigned>(fr.target_face_count), fr.servo_dx, fr.servo_dy, fr.accepted ? 1 : 0, rtt,
@@ -1357,6 +1399,32 @@ void EdgeWorker::sendFrame(const FrameMeta& meta)
     if (fr.accepted) {
         mclog::tagInfo(kTag, "accepted frame_id={}; stop sending frames for this session", fr.frame_id);
     }
+}
+
+// send 面 (net タスクの所有) の RGB565 LE を JPEG にする。成功すれば out に image_to_jpeg() が malloc した
+// バッファが入り、呼び出し側が free() する。失敗 (確保失敗を含む) は統計に数えて false。ログは 1 回ごとには出さない。
+//
+// エンコーダは同時に 1 つだけ動く: 呼ぶのはこの net タスク (アプリごとに 1 つ) だけで、符号化と送信は直列。
+// これで PSRAM のピーク (YUYV 入力 150 KiB + 出力 約 177 KiB) が 1 組に収まる (§3.3「並列性」)。
+// 入力形式と確保先は frame_jpeg.cpp。
+bool EdgeWorker::encodeJpeg(const FrameMeta& meta, uint8_t*& out, size_t& out_len)
+{
+    out     = nullptr;
+    out_len = 0;
+    ++encode_seq;
+    const uint32_t t0 = nowMs();
+    bool ok           = false;
+    if (!frame::injectEncodeFailure(encode_seq, config::JPEG_FAIL_EVERY)) {
+        ok = encodeRgb565Jpeg(slot[send_idx], meta.len, meta.width, meta.height, config::FRAME_JPEG_QUALITY, &out,
+                              &out_len);
+    }
+    const uint32_t encode_ms = nowMs() - t0;
+    if (!ok) {
+        frame_stats.addEncodeFailure();
+        return false;
+    }
+    frame_stats.addEncoded(encode_ms, out_len);
+    return true;
 }
 
 void EdgeWorker::fetchCandidate(const char* sid, uint32_t timeout_ms, bool allow_retry, bool& ok, JpegBytes& jpeg)
@@ -1851,15 +1919,20 @@ void EdgeWorker::logStats(uint32_t now)
     if (dt < kStatsIntervalMs) {
         return;
     }
-    if (stats_frames > 0 || stats_failures > 0 || stats_skipped > 0) {
-        const float fps         = stats_frames * 1000.0f / dt;
-        const uint32_t rtt_avg  = stats_frames ? stats_rtt_sum / stats_frames : 0;
-        const uint32_t edge_avg = stats_frames ? stats_edge_sum / stats_frames : 0;
+    const bool frames_active = !frame_stats.empty();
+    if (frames_active || stats_failures > 0) {
+        const frame::Summary f = frame_stats.summarize(dt);
         mclog::tagInfo(kTag,
-                       "send {} frames in {} ms ({:.1f} fps), rtt avg {} max {} ms, edge avg {} ms, failures {}, "
-                       "skipped {}, stack free {}",
-                       stats_frames, dt, fps, rtt_avg, stats_rtt_max, edge_avg, stats_failures, stats_skipped,
-                       uxTaskGetStackHighWaterMark(nullptr));
+                       "send {} frames ({}) in {} ms ({:.1f} fps), attempts {}, frame failures {} (send {}, encode {}), "
+                       "rtt avg {} max {} ms, edge avg {} ms, failures {}, skipped {}, stack free {}",
+                       f.sent, frame::formatHeader(kFrameFormat), dt, f.fps, f.attempts,
+                       f.send_failures + f.encode_failures, f.send_failures, f.encode_failures, f.rtt_avg_ms,
+                       f.rtt_max_ms, f.edge_avg_ms, stats_failures, f.skipped, uxTaskGetStackHighWaterMark(nullptr));
+        if (kFrameFormat == frame::Format::Jpeg && (f.encoded > 0 || f.encode_failures > 0)) {
+            mclog::tagInfo(kTag, "jpeg: encoded {}, jpeg_encode_ms avg {} max {}, size avg {} max {} B, failed {}",
+                           f.encoded, f.encode_avg_ms, f.encode_max_ms, f.jpeg_avg_bytes, f.jpeg_max_bytes,
+                           f.encode_failures);
+        }
     }
     if (stats_hello > 0) {
         mclog::tagInfo(kTag, "hello {} (ok {}, starting {}) rtt avg {} max {} ms, link {}, stack free {}", stats_hello,
@@ -1871,6 +1944,14 @@ void EdgeWorker::logStats(uint32_t now)
         mclog::tagInfo(kTag, "connections: new {} reused {} ({})", stats_conn_new, stats_conn_reused,
                        url.https ? "https" : "http");
     }
+    if (frames_active || stats_hello > 0) {
+        // 内部 RAM の最小空き (起動からの最小) と今の最大連続領域。TLS と esp_new_jpeg のワーク領域が使う (§3.4)
+        mclog::tagInfo(kTag, "heap: internal free {} min {} largest {}, psram free {} largest {}",
+                       heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                       heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                       heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    }
     stats_conn_new    = 0;
     stats_conn_reused = 0;
     stats_since_ms = now;
@@ -1879,12 +1960,8 @@ void EdgeWorker::logStats(uint32_t now)
     stats_hello_starting = 0;
     stats_hello_rtt_sum  = 0;
     stats_hello_rtt_max  = 0;
-    stats_frames   = 0;
     stats_failures = 0;
-    stats_skipped  = 0;
-    stats_rtt_sum  = 0;
-    stats_rtt_max  = 0;
-    stats_edge_sum = 0;
+    frame_stats.reset();
 }
 
 }  // namespace photobooth::net
