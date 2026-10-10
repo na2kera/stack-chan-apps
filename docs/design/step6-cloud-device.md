@@ -207,7 +207,7 @@ firmware/
 
 ## 6. 受け入れチェック
 
-- [ ] 6a: `wrangler deploy` で Worker が立ち、試験 1〜8 を記録した。`docs/measurements/step6-<date>.md` がある。
+- [x] 6a: `wrangler deploy` で Worker が立ち、試験 1〜8 を記録した。`docs/measurements/step6-<date>.md` がある。→ [step6-2026-10-10.md](../measurements/step6-2026-10-10.md)。試験 3 で切断後も起動が続いたので `503 starting` は不要。試験 7a は `wrangler deploy` で rollout が起きず、Containers API で同じイメージの rollout を作って確かめた
 - [ ] 6b: `idf.py build` (`config_local.h` あり http / あり https / なし) が通る。`firmware-tests` に `edge_url` のテストが入り CI が通る。試験 9〜20。
 - [ ] 6c: 試験 21〜23。`logStats()` に JPEG の統計が出る。
 - [ ] 6d: 試験 24。決めた値 (`config.h`、`wrangler.jsonc`) と根拠を計測記録に書いた。
