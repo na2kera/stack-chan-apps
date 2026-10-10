@@ -11,7 +11,7 @@
 //
 // 独立ファーム版との違い (docs/design/fw-app-step1.md §5):
 //   - IDLE はランチャーの顔の代わりに「待機」画面。「終了」でアプリを閉じる (exitRequested())。
-//   - X_QR の「終了」も IDLE ではなくアプリを閉じてランチャーへ戻る。
+//   - QR 画面の「終了」も IDLE ではなくアプリを閉じてランチャーへ戻る。
 //   - ERROR の「再試行」は純正のカメラドライバを作り直さず、取り込みタスクだけ作り直す。
 //   - REVIEW の候補 JPEG は非同期で受け取る (EdgeClient::requestCandidate / pollCandidate)。
 //   - edge の自動採用の直後に SHUTTER (シャッター音・白フラッシュ・撮れた写真の静止表示) を挟む。
@@ -115,8 +115,7 @@ private:
     void showShutterCaptured(uint32_t now_ms);
     void updateReview(const shared::hw::Event& ev, uint32_t now_ms);
     void updateUploading(uint32_t now_ms);
-    void updatePhotoQr(const shared::hw::Event& ev, uint32_t now_ms);
-    void updateXQr(const shared::hw::Event& ev, uint32_t now_ms);
+    void updateQr(const shared::hw::Event& ev, uint32_t now_ms);
     void updateError(const shared::hw::Event& ev, uint32_t now_ms);
     void updateDiag(const shared::hw::Event& ev, uint32_t now_ms);
 
@@ -215,7 +214,7 @@ private:
     // REVIEW で候補を表示できたか (false なら画面は「撮り直す」だけ)
     bool review_has_candidate_ = false;
 
-    // PHOTO_QR / X_QR に出す URL (edge の photo_ready、edge 無効ビルドでは config の固定 URL)
+    // QR 画面に出す URL (edge の photo_ready、edge 無効ビルドでは config の固定 URL)
     char photo_url_[256] = {};
     char share_url_[256] = {};
     char expires_at_[8]  = {};  // 表示用 "HH:MM"

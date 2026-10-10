@@ -7,7 +7,7 @@
 
 - アプリを開くと純正の Wi-Fi 設定（NVS）で接続し、edge に `hello` して待機画面に「PC接続中」/「PC未接続」を出す。
 - COMPOSE / CAPTURE でフレーム（QVGA RGB565 little endian）を edge に送り、`servo_dx/dy` で首を寄せ、人数/目標とヒント（「もう少し寄ってね」「4人までだよ」）を出す。
-- `accepted` で「撮れたよ」→ `review save` → `photo` で受けた **本物の URL** を PHOTO_QR / X_QR に出し、削除時刻（`expires_at` の HH:MM）を表示する。
+- `accepted` で「撮れたよ」→ `review save` → `photo` で受けた **本物の URL** を QR 画面（変更: `ui-review-two-qr.md`。旧 PHOTO_QR / X_QR）に出し、削除時刻（`expires_at` の HH:MM）を表示する。
 - 時間切れなら `timeout` → edge の候補 JPEG を REVIEW に表示。顔なしは「顔が見つからなかったよ」。
 - edge に繋がらないときは自動判定つきの撮影を始めず、診断画面（Wi-Fi 状態 / edge host:port / 最後のエラー、「再接続」「判定なしで撮影」）を出す（spec §9）。
 - 設定ファイルが無い（edge 未設定）ビルドでは、ステップ1 と同じ単体動作（固定 URL）になる。
@@ -56,12 +56,19 @@ app_photobooth/
 
 - IDLE（待機画面）: 右下に「PC接続中」/「PC未接続」。online でタッチ → 判定つき撮影。offline でタッチ → DIAG。
 - DIAG: Wi-Fi 状態、edge host:port、最後のエラー。ボタン「再接続」「判定なしで撮影」。頭部タッチで待機へ戻る。
-- PHOTO_QR: QR は `photo_url`、「削除予定 HH:MM」。X_QR: `share_url`。
+- REVIEW: ボタンは左「撮り直す」、右「次へ」（旧「保存する」。動作は同じ: UPLOADING へ）。
+- QR（旧 PHOTO_QR / X_QR を 1 画面に統合）: 左に写真 QR（`photo_url`）、右に投稿 QR（`share_url`）。タイトル帯「写真を保存」の右側に「削除予定 HH:MM」。ボタンは左「撮り直す」、右「終了」（アプリを閉じる）。X の案内文は出さない。どちらかの QR を作れなければ ERROR「QRを表示できません」。
+  - 変更 (2026-10-10、`ui-review-two-qr.md`): 旧 PHOTO_QR（写真 QR +「次へ」「撮り直す」）→ X_QR（投稿 QR + 案内 +「戻る」「終了」）の 2 画面をやめた。
+
+```
+REVIEW --(次へ)--> UPLOADING --(photo_ready)--> QR --(撮り直す)--> ANNOUNCE
+                                                  --(終了)--> アプリを閉じる
+```
 - 「判定なしで撮影」は UPLOADING で ERROR「PC未接続のため保存できません」。
 
 ### シャッター演出（SHUTTER）
 
-edge の判定で自動採用されたときだけ、CAPTURE と UPLOADING の間に SHUTTER を挟む。REVIEW の「保存する」と「判定なしで撮影」の経路は変えない。
+edge の判定で自動採用されたときだけ、CAPTURE と UPLOADING の間に SHUTTER を挟む。REVIEW の「次へ」（旧「保存する」）と「判定なしで撮影」の経路は変えない。
 
 ```
 CAPTURE --(frame_result accepted)--> SHUTTER --(表示 ≥ CAPTURED_HOLD_MS かつ captured.wav 終了)--> UPLOADING
@@ -89,7 +96,7 @@ CAPTURE --(frame_result accepted)--> SHUTTER --(表示 ≥ CAPTURED_HOLD_MS か�
 - [ ] `idf.py build`（`config_local.h` あり / なしの両方）。
 - [ ] 待機画面に「PC接続中」。edge を止めると 5〜10 秒で「PC未接続」、再起動で戻る。
 - [ ] 顔を出すと 1 秒で CAPTURE。左右にずらすと首が同じ方向へ（逆なら edge の `[head] gain_x` の符号）。
-- [ ] 1 人で笑うとシャッター音と白フラッシュ → 撮れた写真に「撮れたよ」（1 秒以上、声が終わるまで）→ 写真 QR をスマホのモバイル回線で開いて保存できる。X QR で投稿画面。
+- [ ] 1 人で笑うとシャッター音と白フラッシュ → 撮れた写真に「撮れたよ」（1 秒以上、声が終わるまで）→ QR 画面の左 QR をスマホのモバイル回線で開いて保存できる。右 QR で投稿画面。
 - [ ] 目を閉じる／笑わないと採用されず、時間切れで候補が出る。顔なしで「顔が見つからなかったよ」。
 - [ ] アプリを閉じたあと純正アプリが正常。再度開いて撮影できる。
 - [ ] 送信 fps ≥ 2。
